@@ -6,6 +6,7 @@ import { Transcript } from './components/Transcript';
 import { Intro } from './components/Intro';
 import ConceptMapHistory from './components/ConceptMapHistory';
 import KnowledgeBase from './components/KnowledgeBase';
+import LiveView from './components/LiveView';
 import { useSessionContext } from './context/SessionContext';
 import type { GraphData, LogMessage } from './types/api';
 import {
@@ -22,6 +23,7 @@ import {
   History,
   BookOpen,
   MessageSquare,
+  Radio,
 } from 'lucide-react';
 
 function AppContent() {
@@ -36,10 +38,12 @@ function AppContent() {
   const [showIntro, setShowIntro] = useState(true);
   const [showConceptMap, setShowConceptMap] = useState(true);
   const [showAnalytics, setShowAnalytics] = useState(true);
-  const [activeTab, setActiveTab] = useState<'chat' | 'history' | 'knowledge'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'live' | 'history' | 'knowledge'>('chat');
 
   const { session, streaming, streamingThought, conceptMap, feasibilitySignal } = useSessionContext();
   const [syncingToNotion, setSyncingToNotion] = useState(false);
+  const [liveConceptMap, setLiveConceptMap] = useState<Record<string, string[]>>({});
+  const [liveFeasibilitySignal, setLiveFeasibilitySignal] = useState<number | null>(null);
 
   // Initialize with root node
   useEffect(() => {
@@ -266,6 +270,19 @@ function AppContent() {
                 </div>
               </button>
               <button
+                onClick={() => setActiveTab('live')}
+                className={`flex-1 px-4 py-3 text-xs font-bold uppercase tracking-wider transition-colors font-mono border-r border-white/20 ${
+                  activeTab === 'live'
+                    ? 'bg-white/10 text-white border-b-2 border-white'
+                    : 'text-gray-500 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <div className="flex items-center justify-center gap-2">
+                  <Radio className="w-4 h-4" />
+                  Live
+                </div>
+              </button>
+              <button
                 onClick={() => setActiveTab('history')}
                 className={`flex-1 px-4 py-3 text-xs font-bold uppercase tracking-wider transition-colors font-mono border-r border-white/20 ${
                   activeTab === 'history'
@@ -316,6 +333,18 @@ function AppContent() {
                 </div>
               </>
             )}
+            {activeTab === 'live' && (
+              <div className="flex-1 overflow-hidden">
+                <LiveView
+                  onGraphUpdate={(newData) => setGraphData(newData)}
+                  onLog={(msg) => setLogs((prev) => [...prev, msg])}
+                  onConceptMapUpdate={(map, feas) => {
+                    setLiveConceptMap(map || {});
+                    setLiveFeasibilitySignal(feas ?? null);
+                  }}
+                />
+              </div>
+            )}
             {activeTab === 'history' && (
               <div className="flex-1 overflow-hidden">
                 <ConceptMapHistory />
@@ -328,8 +357,11 @@ function AppContent() {
             )}
           </div>
 
-          {/* Concept Map - Collapsible */}
-          {conceptMap && Object.keys(conceptMap).length > 0 && (
+          {/* Concept Map - Collapsible (from session or Live when on Live tab) */}
+          {(() => {
+            const map = activeTab === 'live' ? liveConceptMap : (conceptMap ?? {});
+            return map && Object.keys(map).length > 0;
+          })() && (
             <div className="border-b border-white/10 bg-black/50">
               <button
                 onClick={() => setShowConceptMap(!showConceptMap)}
@@ -341,7 +373,7 @@ function AppContent() {
                     Concept Map
                   </h4>
                   <span className="ml-2 text-xs text-gray-500">
-                    ({Object.keys(conceptMap).length})
+                    ({(activeTab === 'live' ? liveConceptMap : conceptMap) && Object.keys(activeTab === 'live' ? liveConceptMap : conceptMap).length})
                   </span>
                 </div>
                 <ChevronLeft
@@ -353,7 +385,7 @@ function AppContent() {
 
               {showConceptMap && (
                 <div className="px-6 pb-4 space-y-3 bg-black/40">
-                  {Object.entries(conceptMap).map(([concept, terms]) => (
+                  {Object.entries(activeTab === 'live' ? liveConceptMap : (conceptMap || {})).map(([concept, terms]) => (
                     <div key={concept} className="border-l-2 border-white/30 pl-3 py-1">
                       <p className="text-xs font-bold text-white uppercase tracking-wider mb-1 font-mono">
                         {concept}
@@ -419,13 +451,13 @@ function AppContent() {
                       Feasibility
                     </span>
                     <span className="text-sm font-bold text-blue-400">
-                      {feasibilitySignal !== null ? Math.round(feasibilitySignal * 100) : '-'}%
+                      {(activeTab === 'live' ? liveFeasibilitySignal : feasibilitySignal) !== null ? Math.round((activeTab === 'live' ? liveFeasibilitySignal : feasibilitySignal)! * 100) : '-'}%
                     </span>
                   </div>
                   <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden border border-white/20">
                     <div
                       className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full"
-                      style={{ width: feasibilitySignal !== null ? `${feasibilitySignal * 100}%` : '0%' }}
+                      style={{ width: (activeTab === 'live' ? liveFeasibilitySignal : feasibilitySignal) !== null ? `${(activeTab === 'live' ? liveFeasibilitySignal : feasibilitySignal)! * 100}%` : '0%' }}
                     />
                   </div>
                 </div>

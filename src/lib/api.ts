@@ -1,4 +1,14 @@
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000";
+export const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:5000";
+
+/**
+ * WebSocket URL for Live agent (ws or wss from http/https).
+ * REST uses credentials: 'include'. If UI (e.g. :5173) and API (:5000) differ, the browser
+ * may not send cookies to the WS; use a dev proxy (same origin) or run UI from API origin to test.
+ */
+export function getLiveWebSocketUrl(): string {
+  const base = API_BASE.replace(/^http/, "ws");
+  return `${base}/api/agent/live`;
+}
 
 const defaultOptions: RequestInit = {
   credentials: "include",
