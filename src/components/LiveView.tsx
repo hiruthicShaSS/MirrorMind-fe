@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useSessionContext } from '../context/SessionContext';
 import { useLiveAgent } from '../hooks/useLiveAgent';
 import { startMicCapture } from '../lib/audioCapture';
-import { Mic, MicOff, Send, Wifi, WifiOff, Play, Volume2 } from 'lucide-react';
+import { Mic, MicOff, Send, Wifi, WifiOff, Play, Volume2, Radio } from 'lucide-react';
 import type { GraphData, LogMessage, Node, Edge } from '../types/api';
 
 interface LiveViewProps {
@@ -45,6 +45,8 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate }: L
   const [userInput, setUserInput] = useState('');
   const [recording, setRecording] = useState(false);
   const [captureHandle, setCaptureHandle] = useState<{ stop: () => Promise<string> } | null>(null);
+  const pendingStopRef = useRef(false);
+  const voiceTranscriptRef = useRef('');
 
   const handleDone = useCallback(
     (data: { conceptMap: Record<string, string[]>; feasibilitySignal?: number }) => {
@@ -107,12 +109,45 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate }: L
   };
 
   const handleMicPressStart = async () => {
-    if (!connected || !ready) return;
+    if (!connected || !ready) {
+      return;
+    }
+    pendingStopRef.current = false;
+    voiceTranscriptRef.current = '';
     try {
+      // Optional browser-side speech recognition for showing what the user said.
+      const SpeechRecognitionAPI =
+        (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+      if (SpeechRecognitionAPI) {
+        const recognition = new SpeechRecognitionAPI();
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+        recognition.onresult = (event: any) => {
+          const result = event.results[event.results.length - 1];
+          const transcript = result[0]?.transcript ?? '';
+          voiceTranscriptRef.current = transcript;
+        };
+        recognition.start();
+      }
+
       const handle = await startMicCapture();
+      if (pendingStopRef.current) {
+        pendingStopRef.current = false;
+        try {
+          const base64 = await handle.stop();
+          if (base64) {
+            sendAudio(base64, 'audio/pcm;rate=16000', voiceTranscriptRef.current);
+          }
+        } catch (err) {
+          console.error('Error while stopping mic capture after late handle resolution:', err);
+        }
+        return;
+      }
       setCaptureHandle(handle);
       setRecording(true);
     } catch (e) {
+      console.error('Microphone access failed:', e);
       onLog?.({
         role: 'system',
         text: 'Microphone access failed: ' + (e instanceof Error ? e.message : 'Unknown'),
@@ -122,28 +157,49 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate }: L
   };
 
   const handleMicPressEnd = async () => {
-    if (!captureHandle || !recording) return;
+    if (!captureHandle || !recording) {
+      // Mark that a stop was requested before the capture handle became available.
+      pendingStopRef.current = true;
+      return;
+    }
+    pendingStopRef.current = false;
     setRecording(false);
     try {
       const base64 = await captureHandle.stop();
       setCaptureHandle(null);
-      if (base64) sendAudio(base64, 'audio/pcm;rate=16000');
-    } catch (_) {}
+      if (base64) {
+        sendAudio(base64, 'audio/pcm;rate=16000', voiceTranscriptRef.current);
+      }
+    } catch (err) {
+      console.error('Error while stopping mic capture or sending audio:', err);
+    }
   };
 
   if (!session) {
     return (
-      <div className="h-full flex flex-col items-center justify-center p-8 text-center">
-        <p className="text-gray-500 font-mono text-sm mb-4">Start a session to use Live.</p>
-        <button
-          type="button"
-          onClick={initializeSession}
-          disabled={loading}
-          className="flex items-center gap-2 px-6 py-3 bg-white text-black font-bold uppercase text-xs tracking-wider hover:opacity-90 disabled:opacity-50"
-        >
-          <Play className="w-4 h-4" />
-          {loading ? 'Starting...' : 'Start session'}
-        </button>
+      <div className="h-full flex flex-col items-center justify-center p-8">
+        <div className="w-full max-w-md rounded-2xl border border-white/20 bg-white/5 backdrop-blur-xl shadow-2xl p-8 flex flex-col items-center gap-6 text-center">
+          <div className="w-12 h-12 rounded-full border border-white/20 bg-white/10 flex items-center justify-center">
+            <Radio className="w-6 h-6 text-white/80" />
+          </div>
+          <div>
+            <h3 className="font-bold text-white font-mono text-sm uppercase tracking-wider mb-2">
+              Live voice & chat
+            </h3>
+            <p className="text-gray-400 font-mono text-xs">
+              Start a session to talk or type with the agent in real time.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={initializeSession}
+            disabled={loading}
+            className="flex items-center gap-2 px-6 py-3 rounded-xl bg-white/20 border border-white/30 text-white font-mono font-bold uppercase text-xs tracking-wider hover:bg-white/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Play className="w-4 h-4" />
+            {loading ? 'Starting…' : 'Start session'}
+          </button>
+        </div>
       </div>
     );
   }

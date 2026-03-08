@@ -1,30 +1,11 @@
 import { useState, useEffect } from 'react';
 import { syncSessionToNotion } from './lib/api';
 import { MindMap } from './components/AgentChat';
-import { LiveSession } from './components/LiveSession';
-import { Transcript } from './components/Transcript';
 import { Intro } from './components/Intro';
-import ConceptMapHistory from './components/ConceptMapHistory';
-import KnowledgeBase from './components/KnowledgeBase';
 import LiveView from './components/LiveView';
 import { useSessionContext } from './context/SessionContext';
 import type { GraphData, LogMessage } from './types/api';
-import {
-  Layers,
-  Share2,
-  Menu,
-  X,
-  Home,
-  Brain,
-  Cpu,
-  ChevronLeft,
-  ChevronRight,
-  Sparkles,
-  History,
-  BookOpen,
-  MessageSquare,
-  Radio,
-} from 'lucide-react';
+import { Layers, Share2, Menu, X, Home, Brain, Cpu, ChevronLeft, ChevronRight, Sparkles, Radio, Map } from 'lucide-react';
 
 function AppContent() {
   // State management for UI
@@ -36,9 +17,8 @@ function AppContent() {
   const [isRightSidebarOpen, setRightSidebarOpen] = useState(true);
   const [isLeftSidebarOpen, setLeftSidebarOpen] = useState(false);
   const [showIntro, setShowIntro] = useState(true);
-  const [showConceptMap, setShowConceptMap] = useState(true);
+  const [showConceptMapModal, setShowConceptMapModal] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(true);
-  const [activeTab, setActiveTab] = useState<'chat' | 'live' | 'history' | 'knowledge'>('chat');
 
   const { session, streaming, streamingThought, conceptMap, feasibilitySignal } = useSessionContext();
   const [syncingToNotion, setSyncingToNotion] = useState(false);
@@ -82,18 +62,13 @@ function AppContent() {
   };
 
   return (
-    <div className="w-full h-screen bg-gradient-to-br from-gray-950 via-gray-900 to-black text-white relative font-sans overflow-hidden">
-      {/* Animated background gradient orbs */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-purple-600/20 to-transparent rounded-full blur-3xl animate-pulse" />
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-tr from-blue-600/20 to-transparent rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
-      </div>
-
+    <div className="w-full h-screen bg-black text-white relative font-sans overflow-hidden">
       {/* Subtle grid pattern */}
       <div
-        className="fixed inset-0 pointer-events-none z-0 opacity-5"
+        className="fixed inset-0 pointer-events-none z-0 opacity-10"
         style={{
-          backgroundImage: 'linear-gradient(90deg, #ffffff 1px, transparent 1px), linear-gradient(#ffffff 1px, transparent 1px)',
+          backgroundImage:
+            'linear-gradient(90deg, rgba(255,255,255,0.08) 1px, transparent 1px), linear-gradient(rgba(255,255,255,0.08) 1px, transparent 1px)',
           backgroundSize: '50px 50px',
         }}
       />
@@ -145,8 +120,8 @@ function AppContent() {
 
         {/* CENTER MAIN AREA - MindMap Canvas */}
         <div className="flex-1 flex flex-col relative z-10">
-          {/* Top Navigation Bar - Premium Header */}
-          <nav className="h-20 border-b border-white/10 bg-white/5 backdrop-blur-sm flex items-center justify-between px-8">
+          {/* Top Navigation Bar */}
+          <nav className="h-20 border-b border-white/15 bg-black/80 backdrop-blur-sm flex items-center justify-between px-8">
             {/* Left Nav Section */}
             <div className="flex items-center gap-6">
               {/* Left Sidebar Toggle */}
@@ -163,18 +138,18 @@ function AppContent() {
               </button>
 
               {/* Logo & Title */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
                 <h1 className="text-xl font-bold tracking-tight">MIRROR.MIND</h1>
-                <span className="text-xs px-3 py-1 rounded-full bg-gradient-to-r from-purple-600/30 to-blue-600/30 border border-purple-500/30 text-purple-200">
-                  v1.0 ALPHA
+                <span className="text-[10px] px-2 py-0.5 rounded-none border border-white/40 bg-white/10 uppercase tracking-widest font-mono">
+                  v1.0 alpha
                 </span>
               </div>
             </div>
 
             {/* Center - Status */}
             <div className="absolute left-1/2 transform -translate-x-1/2 flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-              <span className="text-sm text-gray-400">SYSTEM_ACTIVE</span>
+              <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              <span className="text-sm text-gray-300">SYSTEM_ACTIVE</span>
             </div>
 
             {/* Right Nav Section - Action Buttons */}
@@ -190,7 +165,7 @@ function AppContent() {
               <button
                 onClick={handleSyncToNotion}
                 disabled={!session?.id || syncingToNotion}
-                className="px-4 py-2 text-sm rounded-lg bg-gradient-to-r from-purple-600/20 to-blue-600/20 hover:from-purple-600/30 hover:to-blue-600/30 border border-purple-500/30 hover:border-purple-500/50 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 text-sm rounded-lg bg-white/5 hover:bg-white/10 border border-white/30 hover:border-white transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 title="Sync to Notion"
               >
                 <Share2 className="w-4 h-4" />
@@ -225,17 +200,10 @@ function AppContent() {
             </div>
           </div>
 
-          {/* Bottom Control Panel */}
-          <div className="h-24 border-t border-white/10 bg-white/5 backdrop-blur-sm">
-            <LiveSession
-              graphData={graphData}
-              onGraphUpdate={(newData) => setGraphData(newData)}
-              onLog={(msg) => setLogs((prev) => [...prev, msg])}
-            />
-          </div>
+          {/* Bottom Control Panel removed; Live interactions happen in the right sidebar */}
         </div>
 
-        {/* RIGHT SIDEBAR - Chat, Concept Map, Analytics */}
+        {/* RIGHT SIDEBAR - Live, Concept Map, Analytics */}
         <div
           className={`${
             isRightSidebarOpen ? 'w-screen sm:w-[480px] lg:w-[520px]' : 'w-0'
@@ -253,159 +221,103 @@ function AppContent() {
             </div>
           )}
 
-          {/* Tabs */}
-          <div className="border-b border-white/20 bg-black/50">
-            <div className="flex">
-              <button
-                onClick={() => setActiveTab('chat')}
-                className={`flex-1 px-4 py-3 text-xs font-bold uppercase tracking-wider transition-colors font-mono border-r border-white/20 ${
-                  activeTab === 'chat'
-                    ? 'bg-white/10 text-white border-b-2 border-white'
-                    : 'text-gray-500 hover:text-white hover:bg-white/5'
+          {/* Live Content */}
+          <div className="border-b border-white/20 bg-black/60">
+            <div className="flex items-center gap-2 px-4 py-3">
+              <Radio className="w-4 h-4 text-white" />
+              <h3 className="font-bold text-xs uppercase tracking-wider text-white font-mono">
+                Live
+              </h3>
+              <div
+                className={`ml-auto w-2 h-2 rounded-full ${
+                  streaming ? 'bg-white animate-pulse' : 'bg-white/30'
                 }`}
-              >
-                <div className="flex items-center justify-center gap-2">
-                  <MessageSquare className="w-4 h-4" />
-                  Chat
-                </div>
-              </button>
-              <button
-                onClick={() => setActiveTab('live')}
-                className={`flex-1 px-4 py-3 text-xs font-bold uppercase tracking-wider transition-colors font-mono border-r border-white/20 ${
-                  activeTab === 'live'
-                    ? 'bg-white/10 text-white border-b-2 border-white'
-                    : 'text-gray-500 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <div className="flex items-center justify-center gap-2">
-                  <Radio className="w-4 h-4" />
-                  Live
-                </div>
-              </button>
-              <button
-                onClick={() => setActiveTab('history')}
-                className={`flex-1 px-4 py-3 text-xs font-bold uppercase tracking-wider transition-colors font-mono border-r border-white/20 ${
-                  activeTab === 'history'
-                    ? 'bg-white/10 text-white border-b-2 border-white'
-                    : 'text-gray-500 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <div className="flex items-center justify-center gap-2">
-                  <History className="w-4 h-4" />
-                  History
-                </div>
-              </button>
-              <button
-                onClick={() => setActiveTab('knowledge')}
-                className={`flex-1 px-4 py-3 text-xs font-bold uppercase tracking-wider transition-colors font-mono ${
-                  activeTab === 'knowledge'
-                    ? 'bg-white/10 text-white border-b-2 border-white'
-                    : 'text-gray-500 hover:text-white hover:bg-white/5'
-                }`}
-              >
-                <div className="flex items-center justify-center gap-2">
-                  <BookOpen className="w-4 h-4" />
-                  Knowledge
-                </div>
-              </button>
+              />
             </div>
           </div>
-
-          {/* Tab Content */}
-          <div className="flex-1 overflow-hidden flex flex-col">
-            {activeTab === 'chat' && (
-              <>
-                <div className="p-6 border-b border-white/20 bg-black/50">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-white" />
-                    <h3 className="font-bold text-sm uppercase tracking-wider text-white font-mono">
-                      Chat
-                    </h3>
-                    <div className={`ml-auto w-2 h-2 rounded-full ${streaming ? 'bg-white animate-pulse' : 'bg-white/30'}`} />
-                  </div>
-                </div>
-                <div className="flex-1 overflow-y-auto">
-                  <Transcript 
-                    logs={logs}
-                    streamingThought={streamingThought}
-                    isStreaming={streaming}
-                  />
-                </div>
-              </>
-            )}
-            {activeTab === 'live' && (
-              <div className="flex-1 overflow-hidden">
-                <LiveView
-                  onGraphUpdate={(newData) => setGraphData(newData)}
-                  onLog={(msg) => setLogs((prev) => [...prev, msg])}
-                  onConceptMapUpdate={(map, feas) => {
-                    setLiveConceptMap(map || {});
-                    setLiveFeasibilitySignal(feas ?? null);
-                  }}
-                />
-              </div>
-            )}
-            {activeTab === 'history' && (
-              <div className="flex-1 overflow-hidden">
-                <ConceptMapHistory />
-              </div>
-            )}
-            {activeTab === 'knowledge' && (
-              <div className="flex-1 overflow-hidden">
-                <KnowledgeBase />
-              </div>
-            )}
+          <div className="flex-1 overflow-hidden">
+            <LiveView
+              onGraphUpdate={(newData) => setGraphData(newData)}
+              onLog={(msg) => setLogs((prev) => [...prev, msg])}
+              onConceptMapUpdate={(map, feas) => {
+                setLiveConceptMap(map || {});
+                setLiveFeasibilitySignal(feas ?? null);
+              }}
+            />
           </div>
 
-          {/* Concept Map - Collapsible (from session or Live when on Live tab) */}
+          {/* Concept Map - trigger button when data exists */}
           {(() => {
-            const map = activeTab === 'live' ? liveConceptMap : (conceptMap ?? {});
+            const map =
+              Object.keys(liveConceptMap).length > 0 ? liveConceptMap : conceptMap ?? {};
             return map && Object.keys(map).length > 0;
           })() && (
-            <div className="border-b border-white/10 bg-black/50">
+            <div className="border-t border-white/10 bg-black/50 px-4 py-3">
               <button
-                onClick={() => setShowConceptMap(!showConceptMap)}
-                className="w-full px-6 py-4 flex items-center justify-between hover:bg-white/5 transition-colors"
+                type="button"
+                onClick={() => setShowConceptMapModal(true)}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/5 border border-white/20 backdrop-blur-sm text-white font-mono text-xs font-bold uppercase tracking-wider hover:bg-white/10 transition-colors"
               >
-                <div className="flex items-center gap-2">
-                  <div className="w-1 h-1 bg-green-400 rounded-full" />
-                  <h4 className="font-bold text-xs uppercase tracking-wider text-white">
-                    Concept Map
-                  </h4>
-                  <span className="ml-2 text-xs text-gray-500">
-                    ({(activeTab === 'live' ? liveConceptMap : conceptMap) && Object.keys(activeTab === 'live' ? liveConceptMap : conceptMap).length})
-                  </span>
-                </div>
-                <ChevronLeft
-                  className={`w-4 h-4 text-gray-400 transition-transform ${
-                    showConceptMap ? 'rotate-90' : ''
-                  }`}
-                />
+                <Map className="w-4 h-4 text-green-400" />
+                View concept map
               </button>
-
-              {showConceptMap && (
-                <div className="px-6 pb-4 space-y-3 bg-black/40">
-                  {Object.entries(activeTab === 'live' ? liveConceptMap : (conceptMap || {})).map(([concept, terms]) => (
-                    <div key={concept} className="border-l-2 border-white/30 pl-3 py-1">
-                      <p className="text-xs font-bold text-white uppercase tracking-wider mb-1 font-mono">
-                        {concept}
-                      </p>
-                      <div className="flex flex-wrap gap-1">
-                        {terms.map((term, idx) => (
-                          <span
-                            key={idx}
-                            className="px-2 py-1 text-xs bg-white/10 text-white border border-white/20 font-mono rounded-none"
-                          >
-                            {term}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           )}
+
+          {/* Concept Map popup modal */}
+          {showConceptMapModal && (() => {
+            const map =
+              Object.keys(liveConceptMap).length > 0 ? liveConceptMap : conceptMap ?? {};
+            return (
+              <div
+                className="fixed inset-0 z-50 flex items-center justify-center p-4"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="concept-map-title"
+              >
+                <div
+                  className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+                  onClick={() => setShowConceptMapModal(false)}
+                  aria-hidden="true"
+                />
+                <div className="relative w-full max-w-lg max-h-[80vh] overflow-hidden rounded-2xl border border-white/20 bg-white/10 backdrop-blur-xl shadow-2xl flex flex-col">
+                  <div className="flex items-center justify-between px-6 py-4 border-b border-white/20">
+                    <h2 id="concept-map-title" className="font-bold text-sm uppercase tracking-wider text-white font-mono flex items-center gap-2">
+                      <Map className="w-4 h-4 text-green-400" />
+                      Concept map
+                    </h2>
+                    <button
+                      type="button"
+                      onClick={() => setShowConceptMapModal(false)}
+                      className="p-2 rounded-lg border border-white/20 hover:bg-white/10 transition-colors text-white"
+                      aria-label="Close"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                    {Object.entries(map).map(([concept, terms]) => (
+                      <div key={concept} className="border-l-2 border-white/30 pl-4 py-2">
+                        <p className="text-xs font-bold text-white uppercase tracking-wider mb-2 font-mono">
+                          {concept}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {terms.map((term, idx) => (
+                            <span
+                              key={idx}
+                              className="px-2 py-1 text-xs bg-white/10 text-white border border-white/20 font-mono rounded-lg"
+                            >
+                              {term}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Analytics/Metrics - Collapsible */}
           <div className="border-t border-white/10 bg-black/50">
@@ -450,14 +362,21 @@ function AppContent() {
                     <span className="text-xs text-gray-400 font-medium uppercase tracking-wider">
                       Feasibility
                     </span>
-                    <span className="text-sm font-bold text-blue-400">
-                      {(activeTab === 'live' ? liveFeasibilitySignal : feasibilitySignal) !== null ? Math.round((activeTab === 'live' ? liveFeasibilitySignal : feasibilitySignal)! * 100) : '-'}%
+                    <span className="text-sm font-bold text-white">
+                      {(liveFeasibilitySignal ?? feasibilitySignal) !== null
+                        ? Math.round((liveFeasibilitySignal ?? feasibilitySignal)! * 100)
+                        : '-'}
                     </span>
                   </div>
                   <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden border border-white/20">
                     <div
-                      className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full"
-                      style={{ width: (activeTab === 'live' ? liveFeasibilitySignal : feasibilitySignal) !== null ? `${(activeTab === 'live' ? liveFeasibilitySignal : feasibilitySignal)! * 100}%` : '0%' }}
+                      className="h-full bg-gradient-to-r from-white to-gray-300 rounded-full"
+                      style={{
+                        width:
+                          liveFeasibilitySignal ?? feasibilitySignal
+                            ? `${(liveFeasibilitySignal ?? feasibilitySignal)! * 100}%`
+                            : '0%',
+                      }}
                     />
                   </div>
                 </div>

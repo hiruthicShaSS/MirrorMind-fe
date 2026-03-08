@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@studio-freight/lenis": "^1.0.33",
     "@tanstack/react-query": "^5.90.21",
     "@types/d3": "^7.4.3",
     "d3": "^7.9.0",
