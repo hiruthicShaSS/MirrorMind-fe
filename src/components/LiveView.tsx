@@ -12,32 +12,146 @@ interface LiveViewProps {
 }
 
 /** Strip internal reasoning and raw JSON so only the user-facing reply is shown. */
-function cleanReplyForDisplay(reply: string): string {
-  if (!reply.trim()) return reply;
-  let out = reply;
-
-  // Remove raw JSON blob (concept map / feasibility shown in their own sections)
+function stripJsonBlob(text: string): string {
+  let out = text;
   const jsonStart = out.indexOf('{"conceptMap":');
-  if (jsonStart >= 0) {
-    let depth = 0;
-    let j = jsonStart;
-    while (j < out.length) {
-      if (out[j] === '{') depth++;
-      else if (out[j] === '}') {
-        depth--;
-        if (depth === 0) {
-          out = (out.slice(0, jsonStart).trimEnd() + out.slice(j + 1).trimStart()).trim();
-          break;
-        }
+  if (jsonStart < 0) return out;
+
+  let depth = 0;
+  let j = jsonStart;
+  while (j < out.length) {
+    if (out[j] === '{') depth++;
+    else if (out[j] === '}') {
+      depth--;
+      if (depth === 0) {
+        out = (out.slice(0, jsonStart).trimEnd() + out.slice(j + 1).trimStart()).trim();
+        break;
       }
-      j++;
     }
+    j++;
+  }
+  return out;
+}
+
+function splitAssistantContent(raw: string): { response: string; thoughts: string } {
+  const base = stripJsonBlob(raw || '').trim();
+  if (!base) return { response: '', thoughts: '' };
+
+  const withoutThoughtTags = base
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, '')
+    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
+    .trim();
+
+  const finalMarker = withoutThoughtTags.match(/\b(final answer|answer|response)\s*:\s*/i);
+  if (finalMarker && finalMarker.index !== undefined) {
+    const idx = finalMarker.index;
+    const splitIdx = idx + finalMarker[0].length;
+    return {
+      response: withoutThoughtTags.slice(splitIdx).trim(),
+      thoughts: withoutThoughtTags.slice(0, idx).trim(),
+    };
   }
 
-  // Remove reasoning blocks: **Title** followed by paragraph(s) until next ** or dialogue
-  out = out.replace(/\*\*[^*]+\*\*\s*\n\n[\s\S]*?(?=\n\n\*\*|\n\n[A-Z][a-z]+!|\n\nSo\s|\n\n[A-Z][a-z]+,|\s*$)/g, '');
+  const thoughtish = /(^\*\*.*\*\*$)|\b(i'm now|i have now|i've now|i've homed in|zeroing in|moving toward|structuring this|assessment leans|refining|considering options|as a concept map|backend requirements)\b/i;
+  const paras = withoutThoughtTags.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  if (paras.length <= 1) {
+    if (paras[0] && thoughtish.test(paras[0])) {
+      return { response: '', thoughts: paras[0] };
+    }
+    return { response: withoutThoughtTags, thoughts: '' };
+  }
 
-  return out.trim();
+  let splitAt = 0;
+  while (splitAt < paras.length && thoughtish.test(paras[splitAt])) {
+    splitAt++;
+  }
+
+  if (splitAt > 0) {
+    return {
+      response: paras.slice(splitAt).join('\n\n').trim(),
+      thoughts: paras.slice(0, splitAt).join('\n\n').trim(),
+    };
+  }
+
+  return { response: withoutThoughtTags, thoughts: '' };
+}
+
+function sanitizeTextLabel(text: string): string {
+  return text
+    .replace(/^[`"'[\]().,:;!?-]+|[`"'[\]().,:;!?-]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isSentenceLike(text: string): boolean {
+  const words = text.split(/\s+/).filter(Boolean);
+  return words.length > 8 || /[.!?]/.test(text) || text.length > 64;
+}
+
+function normalizeConceptMap(map: Record<string, string[]> | null): Record<string, string[]> {
+  if (!map) return {};
+
+  const out: Record<string, string[]> = {};
+  const seenConcepts = new Set<string>();
+
+  Object.entries(map).forEach(([rawConcept, rawTerms]) => {
+    const concept = sanitizeTextLabel(rawConcept);
+    if (!concept || isSentenceLike(concept)) return;
+    const conceptKey = concept.toLowerCase();
+    if (seenConcepts.has(conceptKey)) return;
+    seenConcepts.add(conceptKey);
+
+    const terms = Array.isArray(rawTerms)
+      ? rawTerms
+          .map((t) => sanitizeTextLabel(String(t)))
+          .filter((t) => t && !isSentenceLike(t))
+          .filter((t, i, arr) => arr.findIndex((x) => x.toLowerCase() === t.toLowerCase()) === i)
+          .slice(0, 8)
+      : [];
+
+    out[concept] = terms;
+  });
+
+  return out;
+}
+
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length >= 4);
+}
+
+function filterConceptMapToCurrentFlow(
+  map: Record<string, string[]> | null,
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  activeReply: string
+): Record<string, string[]> {
+  const normalized = normalizeConceptMap(map);
+  if (Object.keys(normalized).length === 0) return {};
+
+  const recentMessages = messages.slice(-4).map((m) => m.content).join(' ');
+  const contextTokens = new Set([
+    ...tokenize(recentMessages),
+    ...tokenize(activeReply),
+  ]);
+
+  if (contextTokens.size === 0) return normalized;
+
+  const filteredEntries = Object.entries(normalized).filter(([concept, terms]) => {
+    const conceptTokens = tokenize(concept);
+    const termTokens = Array.isArray(terms) ? tokenize(terms.join(' ')) : [];
+    return [...conceptTokens, ...termTokens].some((t) => contextTokens.has(t));
+  });
+
+  // Keep a useful map even if token matching is too strict.
+  if (filteredEntries.length === 0) {
+    return Object.fromEntries(Object.entries(normalized).slice(-3));
+  }
+
+  return Object.fromEntries(filteredEntries);
 }
 
 export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate }: LiveViewProps) {
@@ -47,15 +161,19 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate }: L
   const [captureHandle, setCaptureHandle] = useState<{ stop: () => Promise<string> } | null>(null);
   const pendingStopRef = useRef(false);
   const voiceTranscriptRef = useRef('');
+  const messagesRef = useRef<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
+  const replyRef = useRef('');
+  const [stableConceptMap, setStableConceptMap] = useState<Record<string, string[]>>({});
 
   const handleDone = useCallback(
     (data: { conceptMap: Record<string, string[]>; feasibilitySignal?: number }) => {
-      if (!onGraphUpdate || !data.conceptMap || Object.keys(data.conceptMap).length === 0) return;
+      const mapToRender = filterConceptMapToCurrentFlow(data.conceptMap, messagesRef.current, replyRef.current);
+      if (!onGraphUpdate || !mapToRender || Object.keys(mapToRender).length === 0) return;
       const rootNode: Node = { id: 'root', label: 'ROOT', type: 'root', x: 0, y: 0 };
       const conceptNodes: Node[] = [];
       const valueNodes: Node[] = [];
       const edges: Edge[] = [];
-      Object.entries(data.conceptMap).forEach(([concept, values], conceptIdx) => {
+      Object.entries(mapToRender).forEach(([concept, values], conceptIdx) => {
         const conceptId = `concept-${conceptIdx}`;
         conceptNodes.push({ id: conceptId, label: concept, type: 'concept' });
         edges.push({ source: 'root', target: conceptId });
@@ -92,14 +210,34 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate }: L
     clearError,
   } = useLiveAgent(handleDone);
 
+  useEffect(() => {
+    messagesRef.current = messages;
+    replyRef.current = reply;
+  }, [messages, reply]);
+
+  const focusedConceptMap = filterConceptMapToCurrentFlow(conceptMap, messages, reply);
+
+  useEffect(() => {
+    if (Object.keys(focusedConceptMap).length > 0) {
+      setStableConceptMap(focusedConceptMap);
+    }
+  }, [focusedConceptMap]);
+
+  useEffect(() => {
+    setStableConceptMap({});
+  }, [session?.id]);
+
   const replyEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     replyEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, reply]);
 
   useEffect(() => {
-    onConceptMapUpdate?.(conceptMap || {}, feasibilitySignal ?? null);
-  }, [conceptMap, feasibilitySignal, onConceptMapUpdate]);
+    onConceptMapUpdate?.(
+      Object.keys(focusedConceptMap).length > 0 ? focusedConceptMap : stableConceptMap,
+      feasibilitySignal ?? null
+    );
+  }, [focusedConceptMap, stableConceptMap, feasibilitySignal, onConceptMapUpdate]);
 
   const handleSendText = () => {
     if (!userInput.trim()) return;
@@ -266,41 +404,70 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate }: L
             {connected ? (ready ? 'Type or speak — reply will appear here.' : 'Waiting for agent...') : 'Connect Live, then type or speak.'}
           </div>
         )}
-        {messages.map((m, i) => (
-          <div
-            key={i}
-            className={`mb-4 ${m.role === 'user' ? 'text-right' : ''}`}
-          >
-            <span className="text-xs uppercase text-gray-500 mr-2">
-              {m.role === 'user' ? 'You' : 'Agent'}
-            </span>
+        {messages.map((m, i) => {
+          const split = m.role === 'assistant' ? splitAssistantContent(m.content) : { response: '', thoughts: '' };
+          const assistantDisplay = m.role === 'assistant' ? split.response : '';
+          return (
             <div
-              className={`text-sm whitespace-pre-wrap break-words mt-1 ${
-                m.role === 'user'
-                  ? 'inline-block px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-right'
-                  : 'text-white'
-              }`}
+              key={i}
+              className={`mb-4 ${m.role === 'user' ? 'text-right' : ''}`}
             >
-              {m.role === 'assistant' ? cleanReplyForDisplay(m.content) : m.content}
+              <span className="text-xs uppercase text-gray-500 mr-2">
+                {m.role === 'user' ? 'You' : 'Agent'}
+              </span>
+              <div
+                className={`text-sm whitespace-pre-wrap break-words mt-1 ${
+                  m.role === 'user'
+                    ? 'inline-block px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-right'
+                    : 'text-white'
+                }`}
+              >
+                {m.role === 'assistant' ? (assistantDisplay || 'Open Thoughts to view agent reasoning.') : m.content}
+              </div>
+              {m.role === 'assistant' && split.thoughts && (
+                <details className="mt-2 border border-white/20 bg-white/5 px-3 py-2 rounded-lg">
+                  <summary className="text-xs uppercase tracking-wider text-gray-300 cursor-pointer select-none">
+                    Thoughts
+                  </summary>
+                  <div className="text-xs text-gray-300 whitespace-pre-wrap break-words mt-2">
+                    {split.thoughts}
+                  </div>
+                </details>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
         {reply && (
+          (() => {
+            const split = splitAssistantContent(reply);
+            return (
           <div className="mb-4">
             <span className="text-xs uppercase text-gray-500 mr-2">Agent</span>
             <div className="text-sm text-white whitespace-pre-wrap break-words mt-1">
-              {cleanReplyForDisplay(reply)}
+              {split.response || 'Open Thoughts to view agent reasoning.'}
             </div>
+            {split.thoughts && (
+              <details className="mt-2 border border-white/20 bg-white/5 px-3 py-2 rounded-lg">
+                <summary className="text-xs uppercase tracking-wider text-gray-300 cursor-pointer select-none">
+                  Thoughts
+                </summary>
+                <div className="text-xs text-gray-300 whitespace-pre-wrap break-words mt-2">
+                  {split.thoughts}
+                </div>
+              </details>
+            )}
           </div>
+            );
+          })()
         )}
         <div ref={replyEndRef} />
-        {conceptMap && Object.keys(conceptMap).length > 0 && (
+        {Object.keys(stableConceptMap).length > 0 && (
           <div className="mt-6 border-t border-white/20 pt-4">
             <div className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2">
-              Concept map
+              Concept flow (current topic)
             </div>
             <div className="space-y-2">
-              {Object.entries(conceptMap).map(([concept, terms]) => (
+              {Object.entries(stableConceptMap).map(([concept, terms]) => (
                 <div key={concept} className="border-l-2 border-white/20 pl-3">
                   <div className="text-sm font-bold text-white">{concept}</div>
                   {terms.length > 0 && (

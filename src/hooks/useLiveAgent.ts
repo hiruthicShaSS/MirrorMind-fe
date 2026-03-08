@@ -51,7 +51,6 @@ export function useLiveAgent(
 
   setReplyRef.current = setReply;
   setMessagesRef.current = setMessages;
-  replyAccumulatorRef.current = reply;
 
   const READY_FALLBACK_MS = 2000;
 
@@ -181,6 +180,10 @@ export function useLiveAgent(
         if (readyTimeoutRef.current) {
           clearTimeout(readyTimeoutRef.current);
           readyTimeoutRef.current = null;
+        }
+        const trailingReply = replyAccumulatorRef.current.trim();
+        if (trailingReply) {
+          setMessagesRef.current((prev) => [...prev, { role: 'assistant', content: trailingReply }]);
         }
         wsRef.current = null;
         initSentRef.current = false;
