@@ -44,6 +44,9 @@ export interface Node {
   id: string;
   label: string;
   type: 'root' | 'concept' | 'action' | 'question';
+  weight?: number;
+  rawType?: string;
+  sessionIds?: string[];
   x?: number;
   y?: number;
   fx?: number | null;
@@ -54,6 +57,8 @@ export interface Edge {
   source: string | Node;
   target: string | Node;
   label?: string;
+  weight?: number;
+  relationType?: string;
 }
 
 export interface GraphData {

@@ -9,6 +9,7 @@ interface LiveViewProps {
   onGraphUpdate?: (data: GraphData) => void;
   onLog?: (message: LogMessage) => void;
   onConceptMapUpdate?: (conceptMap: Record<string, string[]>, feasibilitySignal: number | null) => void;
+  onTurnComplete?: () => void;
 }
 
 /** Strip internal reasoning and raw JSON so only the user-facing reply is shown. */
@@ -154,7 +155,7 @@ function filterConceptMapToCurrentFlow(
   return Object.fromEntries(filteredEntries);
 }
 
-export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate }: LiveViewProps) {
+export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onTurnComplete }: LiveViewProps) {
   const { session, loading, initializeSession } = useSessionContext();
   const [userInput, setUserInput] = useState('');
   const [recording, setRecording] = useState(false);
@@ -168,29 +169,31 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate }: L
   const handleDone = useCallback(
     (data: { conceptMap: Record<string, string[]>; feasibilitySignal?: number }) => {
       const mapToRender = filterConceptMapToCurrentFlow(data.conceptMap, messagesRef.current, replyRef.current);
-      if (!onGraphUpdate || !mapToRender || Object.keys(mapToRender).length === 0) return;
-      const rootNode: Node = { id: 'root', label: 'ROOT', type: 'root', x: 0, y: 0 };
-      const conceptNodes: Node[] = [];
-      const valueNodes: Node[] = [];
-      const edges: Edge[] = [];
-      Object.entries(mapToRender).forEach(([concept, values], conceptIdx) => {
-        const conceptId = `concept-${conceptIdx}`;
-        conceptNodes.push({ id: conceptId, label: concept, type: 'concept' });
-        edges.push({ source: 'root', target: conceptId });
-        if (Array.isArray(values) && values.length > 0) {
-          values.forEach((value, valueIdx) => {
-            const valueId = `value-${conceptIdx}-${valueIdx}`;
-            valueNodes.push({ id: valueId, label: value, type: 'action' });
-            edges.push({ source: conceptId, target: valueId });
-          });
-        }
-      });
-      onGraphUpdate({
-        nodes: [rootNode, ...conceptNodes, ...valueNodes],
-        edges,
-      });
+      if (onGraphUpdate && mapToRender && Object.keys(mapToRender).length > 0) {
+        const rootNode: Node = { id: 'root', label: 'ROOT', type: 'root', x: 0, y: 0 };
+        const conceptNodes: Node[] = [];
+        const valueNodes: Node[] = [];
+        const edges: Edge[] = [];
+        Object.entries(mapToRender).forEach(([concept, values], conceptIdx) => {
+          const conceptId = `concept-${conceptIdx}`;
+          conceptNodes.push({ id: conceptId, label: concept, type: 'concept' });
+          edges.push({ source: 'root', target: conceptId });
+          if (Array.isArray(values) && values.length > 0) {
+            values.forEach((value, valueIdx) => {
+              const valueId = `value-${conceptIdx}-${valueIdx}`;
+              valueNodes.push({ id: valueId, label: value, type: 'action' });
+              edges.push({ source: conceptId, target: valueId });
+            });
+          }
+        });
+        onGraphUpdate({
+          nodes: [rootNode, ...conceptNodes, ...valueNodes],
+          edges,
+        });
+      }
+      onTurnComplete?.();
     },
-    [onGraphUpdate]
+    [onGraphUpdate, onTurnComplete]
   );
 
   const {

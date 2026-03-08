@@ -150,6 +150,76 @@ export async function syncSessionToNotion(sessionId: string) {
   );
 }
 
+// --- Knowledge graph ---
+export type KnowledgeGraphNode = {
+  id: string;
+  label?: string;
+  name?: string;
+  type?: string;
+  weight?: number;
+  sessionIds?: string[];
+};
+
+export type KnowledgeGraphEdge = {
+  id?: string;
+  source: string;
+  target: string;
+  type?: string;
+  label?: string;
+  weight?: number;
+};
+
+export type KnowledgeGraphResponse = {
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
+};
+
+export type KnowledgeGraphRebuildStats = {
+  sessionsTotal: number;
+  sessionsUsed: number;
+  nodes: number;
+  edges: number;
+};
+
+export type KnowledgeGraphSearchResult = {
+  id: string;
+  label?: string;
+  name?: string;
+  type?: string;
+  weight?: number;
+};
+
+export type KnowledgeGraphNodeDetails = {
+  node: KnowledgeGraphNode;
+  neighbors: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
+  sessionIds: string[];
+};
+
+export async function getKnowledgeGraph(limitNodes = 300, limitEdges = 600) {
+  return api<KnowledgeGraphResponse>(
+    `/api/agent/knowledge-graph?limitNodes=${limitNodes}&limitEdges=${limitEdges}`
+  );
+}
+
+export async function rebuildKnowledgeGraph() {
+  return api<KnowledgeGraphRebuildStats>(`/api/agent/knowledge-graph/rebuild`, {
+    method: "POST",
+  });
+}
+
+export async function searchKnowledgeGraph(q: string, limit = 20) {
+  return api<KnowledgeGraphSearchResult[]>(
+    `/api/agent/knowledge-graph/search?q=${encodeURIComponent(q)}&limit=${limit}`
+  );
+}
+
+export async function getKnowledgeGraphNodeDetails(nodeId: string) {
+  return api<KnowledgeGraphNodeDetails>(
+    `/api/agent/knowledge-graph/node/${encodeURIComponent(nodeId)}`
+  );
+}
+
 export async function thinkStream(
   sessionId: string,
   userInput: string,
