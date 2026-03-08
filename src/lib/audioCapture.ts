@@ -1,42 +1,41 @@
 const TARGET_SAMPLE_RATE = 16000;
 
 /**
- * Capture mic and encode to 16-bit PCM 16 kHz as base64.
- * onChunk is called with each base64 chunk; call the returned stop() to end and get full base64.
+ * Capture mic and encode to 16-bit little-endian PCM at 16 kHz as base64.
+ * Uses AudioContext at 16 kHz so the browser handles resampling natively.
+ * Call the returned stop() to end recording and get the full base64 payload.
  */
 export async function startMicCapture(
   onChunk?: (base64Chunk: string) => void
 ): Promise<{ stop: () => Promise<string> }> {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const ctx = new AudioContext({ sampleRate: 48000 });
+  const ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
   const source = ctx.createMediaStreamSource(stream);
   const bufferSize = 4096;
   const scriptNode = ctx.createScriptProcessor(bufferSize, 1, 1);
   const chunks: Uint8Array[] = [];
-  let targetSampleIndex = 0;
-  const ratio = ctx.sampleRate / TARGET_SAMPLE_RATE;
 
   scriptNode.onaudioprocess = (event: AudioProcessingEvent) => {
-    const input = event.inputBuffer.getChannelData(0);
-    const output: number[] = [];
+    const input = event.inputBuffer.getChannelData(0); // Float32 [-1, 1]
+    const pcm16 = new Int16Array(input.length);
     for (let i = 0; i < input.length; i++) {
-      const targetIndex = i / ratio;
-      if (Math.floor(targetIndex) >= targetSampleIndex) {
-        output.push(input[i]);
-        targetSampleIndex++;
+      const s = Math.max(-1, Math.min(1, input[i]));
+      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    const bytes = new Uint8Array(pcm16.buffer);
+    chunks.push(bytes);
+
+    if (onChunk) {
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
       }
+      onChunk(btoa(binary));
     }
-    if (output.length === 0) return;
-    const pcm16 = new Int16Array(output.length);
-    for (let j = 0; j < output.length; j++) {
-      const s = Math.max(-1, Math.min(1, output[j]));
-      pcm16[j] = s < 0 ? s * 0x8000 : s * 0x7fff;
-    }
-    chunks.push(new Uint8Array(pcm16.buffer));
-    onChunk?.(btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer))));
   };
 
   source.connect(scriptNode);
+  // Connect through a zero-gain node so audio doesn't play through speakers
   const gain = ctx.createGain();
   gain.gain.value = 0;
   scriptNode.connect(gain);
@@ -49,6 +48,7 @@ export async function startMicCapture(
         source.disconnect();
         ctx.close();
         stream.getTracks().forEach((t) => t.stop());
+
         const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
         const combined = new Uint8Array(totalLength);
         let offset = 0;
@@ -56,7 +56,11 @@ export async function startMicCapture(
           combined.set(c, offset);
           offset += c.length;
         }
-        const binary = new TextDecoder('latin1').decode(combined);
+
+        let binary = '';
+        for (let i = 0; i < combined.length; i++) {
+          binary += String.fromCharCode(combined[i]);
+        }
         resolve(btoa(binary));
       }),
   };

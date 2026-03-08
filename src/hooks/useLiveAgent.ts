@@ -22,7 +22,7 @@ export interface UseLiveAgentActions {
   connect: (sessionId: string) => void;
   disconnect: () => void;
   sendText: (payload: string) => void;
-  sendAudio: (payloadBase64: string, mimeType?: string) => void;
+  sendAudio: (payloadBase64: string, mimeType?: string, displayText?: string) => void;
   clearReply: () => void;
   clearError: () => void;
 }
@@ -51,7 +51,6 @@ export function useLiveAgent(
 
   setReplyRef.current = setReply;
   setMessagesRef.current = setMessages;
-  replyAccumulatorRef.current = reply;
 
   const READY_FALLBACK_MS = 2000;
 
@@ -182,6 +181,10 @@ export function useLiveAgent(
           clearTimeout(readyTimeoutRef.current);
           readyTimeoutRef.current = null;
         }
+        const trailingReply = replyAccumulatorRef.current.trim();
+        if (trailingReply) {
+          setMessagesRef.current((prev) => [...prev, { role: 'assistant', content: trailingReply }]);
+        }
         wsRef.current = null;
         initSentRef.current = false;
         setConnecting(false);
@@ -207,9 +210,12 @@ export function useLiveAgent(
     setReply('');
   }, [ready]);
 
-  const sendAudio = useCallback((payloadBase64: string, mimeType?: string) => {
+  const sendAudio = useCallback((payloadBase64: string, mimeType?: string, displayText?: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || !ready) return;
-    setMessagesRef.current((prev) => [...prev, { role: 'user', content: '(Voice)' }]);
+    setMessagesRef.current((prev) => [
+      ...prev,
+      { role: 'user', content: displayText && displayText.trim().length > 0 ? displayText : 'Voice message' },
+    ]);
     const msg: LiveClientMessage = { type: 'audio', payload: payloadBase64, mimeType };
     wsRef.current.send(JSON.stringify(msg));
     replyAccumulatorRef.current = '';

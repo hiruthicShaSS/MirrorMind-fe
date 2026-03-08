@@ -4,9 +4,17 @@ import type { GraphData, Node, Edge } from '../types/api';
 
 interface MindMapProps {
   data: GraphData;
+  mode?: 'default' | 'knowledge';
+  focusedNodeId?: string | null;
+  onNodeClick?: (node: Node) => void;
 }
 
-export const MindMap: React.FC<MindMapProps> = ({ data }) => {
+export const MindMap: React.FC<MindMapProps> = ({
+  data,
+  mode = 'default',
+  focusedNodeId = null,
+  onNodeClick,
+}) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -55,11 +63,47 @@ export const MindMap: React.FC<MindMapProps> = ({ data }) => {
         d3
           .forceLink<Node, Edge>(data.edges)
           .id((d: Node) => d.id)
-          .distance(150)
+          .distance(mode === 'knowledge' ? 110 : 150)
       )
-      .force('charge', d3.forceManyBody().strength(-400))
+      .force('charge', d3.forceManyBody().strength(mode === 'knowledge' ? -260 : -400))
       .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collide', d3.forceCollide().radius(60));
+      .force('collide', d3.forceCollide().radius((d: any) => {
+        if (mode === 'knowledge') {
+          const w = Math.max(1, d.weight ?? 1);
+          return Math.min(34, 10 + Math.sqrt(w) * 3) + 8;
+        }
+        return 60;
+      }));
+
+    const nodeColor = (d: Node) => {
+      if (mode !== 'knowledge') {
+        if (d.type === 'root') return '#ffffff';
+        if (d.type === 'action') return '#aaaaaa';
+        return '#ffffff';
+      }
+      const raw = (d.rawType || d.type || '').toLowerCase();
+      if (raw.includes('concept')) return '#34d399';
+      if (raw.includes('term')) return '#60a5fa';
+      return '#d1d5db';
+    };
+
+    const nodeRadius = (d: Node) => {
+      if (mode !== 'knowledge') return 20;
+      const w = Math.max(1, d.weight ?? 1);
+      return Math.max(8, Math.min(28, 8 + Math.sqrt(w) * 2.8));
+    };
+
+    const edgeWidth = (d: Edge) => {
+      if (mode !== 'knowledge') return 1;
+      const w = Math.max(1, d.weight ?? 1);
+      return Math.min(5, 1 + Math.log2(w));
+    };
+
+    const edgeDash = (d: Edge) => {
+      const t = (d.relationType || d.label || '').toLowerCase();
+      if (t.includes('co_occurs')) return '5 4';
+      return '0';
+    };
 
     // Links (Edges)
     const link = zoomGroup
@@ -69,7 +113,8 @@ export const MindMap: React.FC<MindMapProps> = ({ data }) => {
       .selectAll('line')
       .data(data.edges)
       .join('line')
-      .attr('stroke-width', 1)
+      .attr('stroke-width', edgeWidth)
+      .attr('stroke-dasharray', edgeDash)
       .attr('marker-end', 'url(#arrow)');
 
     // Nodes Group
@@ -86,17 +131,23 @@ export const MindMap: React.FC<MindMapProps> = ({ data }) => {
           .on('end', dragended as any) as any
       );
 
+    if (onNodeClick) {
+      node
+        .style('cursor', 'pointer')
+        .on('click', (_event, d) => onNodeClick(d));
+    }
+
     // Node Circles
     node
       .append('circle')
-      .attr('r', 20)
+      .attr('r', nodeRadius)
       .attr('fill', '#000000')
-      .attr('stroke', (d: Node) => {
-        if (d.type === 'root') return '#ffffff';
-        if (d.type === 'action') return '#aaaaaa';
-        return '#ffffff';
+      .attr('stroke', (d: Node) => (focusedNodeId && d.id === focusedNodeId ? '#f59e0b' : nodeColor(d)))
+      .attr('stroke-width', (d: Node) => {
+        if (focusedNodeId && d.id === focusedNodeId) return 4;
+        if (mode === 'knowledge') return 2;
+        return d.type === 'root' ? 3 : 1;
       })
-      .attr('stroke-width', (d: Node) => (d.type === 'root' ? 3 : 1))
       .attr('stroke-dasharray', (d: Node) =>
         d.type === 'question' ? '4 2' : '0'
       );
@@ -105,7 +156,9 @@ export const MindMap: React.FC<MindMapProps> = ({ data }) => {
     node
       .append('text')
       .text((d: Node) =>
-        d.type === 'root'
+        mode === 'knowledge'
+          ? ((d.rawType || d.type || 'n').slice(0, 2).toUpperCase())
+          : d.type === 'root'
           ? 'RT'
           : d.type === 'action'
             ? 'AC'
@@ -124,9 +177,12 @@ export const MindMap: React.FC<MindMapProps> = ({ data }) => {
     // Labels (Below node)
     node
       .append('text')
-      .text((d: Node) => d.label.toUpperCase())
+      .text((d: Node) => {
+        const lbl = d.label || d.id;
+        return mode === 'knowledge' ? lbl : lbl.toUpperCase();
+      })
       .attr('x', 0)
-      .attr('y', 35)
+      .attr('y', (d: Node) => nodeRadius(d) + 15)
       .attr('text-anchor', 'middle')
       .attr('fill', '#ffffff')
       .attr('font-size', '10px')
@@ -146,6 +202,16 @@ export const MindMap: React.FC<MindMapProps> = ({ data }) => {
 
       node.attr('transform', (d: Node) => `translate(${d.x},${d.y})`);
     });
+
+    if (focusedNodeId) {
+      const focusNode = data.nodes.find((n) => n.id === focusedNodeId);
+      if (focusNode && focusNode.x != null && focusNode.y != null) {
+        const transform = d3.zoomIdentity
+          .translate(width / 2 - focusNode.x, height / 2 - focusNode.y)
+          .scale(1.3);
+        svg.transition().duration(450).call(zoom.transform as any, transform);
+      }
+    }
 
     function dragstarted(event: d3.D3DragEvent<SVGGElement, Node, Node>) {
       if (!event.active) simulation.alphaTarget(0.3).restart();
@@ -167,7 +233,7 @@ export const MindMap: React.FC<MindMapProps> = ({ data }) => {
     return () => {
       simulation.stop();
     };
-  }, [data]);
+  }, [data, focusedNodeId, mode, onNodeClick]);
 
   return (
     <div
