@@ -17,6 +17,7 @@ interface AuthContextType {
   error: string | null;
   register: (email: string, password: string, name?: string) => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
+  loginWithGoogle: (idToken: string) => Promise<void>;
   verifyEmail: (email: string, code: string) => Promise<void>;
   resendVerification: (email: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -25,22 +26,37 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
+const ENCODED_USER_ID_KEY = "encodedUserId";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const persistEncodedUserId = useCallback((u: User | null) => {
+    if (typeof window === "undefined") return;
+    const encoded = (u?.encodedUserId || "").trim();
+    if (encoded) {
+      window.localStorage.setItem(ENCODED_USER_ID_KEY, encoded);
+      window.sessionStorage.setItem(ENCODED_USER_ID_KEY, encoded);
+    } else {
+      window.localStorage.removeItem(ENCODED_USER_ID_KEY);
+      window.sessionStorage.removeItem(ENCODED_USER_ID_KEY);
+    }
+  }, []);
+
   const checkAuth = useCallback(async () => {
     try {
       const u = await api.getMe();
       setUser(u);
+      persistEncodedUserId(u);
     } catch {
       setUser(null);
+      persistEncodedUserId(null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [persistEncodedUserId]);
 
   useEffect(() => {
     checkAuth();
@@ -62,8 +78,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const u = await api.login(email, password);
       setUser(u);
+      persistEncodedUserId(u);
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "Login failed";
+      setError(message);
+      throw e;
+    }
+  };
+
+  const loginWithGoogle = async (idToken: string) => {
+    setError(null);
+    try {
+      const u = await api.loginWithGoogle(idToken);
+      setUser(u);
+      persistEncodedUserId(u);
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Google login failed";
       setError(message);
       throw e;
     }
@@ -74,6 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const u = await api.verifyEmail(email, code);
       setUser(u);
+      persistEncodedUserId(u);
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "Invalid code";
       setError(message);
@@ -100,6 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // ignore
     }
     setUser(null);
+    persistEncodedUserId(null);
   };
 
   const checkUserByEmail = async (email: string) => {
@@ -116,6 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         error,
         register,
         login,
+        loginWithGoogle,
         verifyEmail,
         resendVerification,
         logout,

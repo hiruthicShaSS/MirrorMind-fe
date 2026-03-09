@@ -24,6 +24,7 @@ export const MindMap: React.FC<MindMapProps> = ({
 
     const width = containerRef.current.clientWidth;
     const height = containerRef.current.clientHeight;
+    const isMobile = width < 640;
 
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove(); // Clear previous render
@@ -63,9 +64,9 @@ export const MindMap: React.FC<MindMapProps> = ({
         d3
           .forceLink<Node, Edge>(data.edges)
           .id((d: Node) => d.id)
-          .distance(mode === 'knowledge' ? 110 : 150)
+          .distance(mode === 'knowledge' ? (isMobile ? 85 : 110) : (isMobile ? 110 : 150))
       )
-      .force('charge', d3.forceManyBody().strength(mode === 'knowledge' ? -260 : -400))
+      .force('charge', d3.forceManyBody().strength(mode === 'knowledge' ? (isMobile ? -180 : -260) : (isMobile ? -260 : -400)))
       .force('center', d3.forceCenter(width / 2, height / 2))
       .force('collide', d3.forceCollide().radius((d: any) => {
         if (mode === 'knowledge') {
@@ -170,7 +171,7 @@ export const MindMap: React.FC<MindMapProps> = ({
       .attr('y', 4)
       .attr('text-anchor', 'middle')
       .attr('fill', '#ffffff')
-      .attr('font-size', '10px')
+      .attr('font-size', isMobile ? '9px' : '10px')
       .attr('font-family', "'JetBrains Mono', monospace")
       .attr('font-weight', 'bold');
 
@@ -185,7 +186,7 @@ export const MindMap: React.FC<MindMapProps> = ({
       .attr('y', (d: Node) => nodeRadius(d) + 15)
       .attr('text-anchor', 'middle')
       .attr('fill', '#ffffff')
-      .attr('font-size', '10px')
+      .attr('font-size', isMobile ? '8px' : '10px')
       .attr('font-family', "'JetBrains Mono', monospace")
       .attr('letter-spacing', '1px')
       .clone(true)
@@ -201,6 +202,33 @@ export const MindMap: React.FC<MindMapProps> = ({
         .attr('y2', (d: any) => (d.target as Node).y!);
 
       node.attr('transform', (d: Node) => `translate(${d.x},${d.y})`);
+    });
+
+    // Fit graph into viewport once layout stabilizes, especially important on mobile.
+    simulation.on('end', () => {
+      if (data.nodes.length === 0) return;
+      const xs = data.nodes.map((n) => n.x ?? 0);
+      const ys = data.nodes.map((n) => n.y ?? 0);
+      const minX = Math.min(...xs);
+      const maxX = Math.max(...xs);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
+      const graphW = Math.max(1, maxX - minX);
+      const graphH = Math.max(1, maxY - minY);
+      const padding = isMobile ? 44 : 80;
+      const scale = Math.min(
+        1.6,
+        Math.max(
+          0.45,
+          Math.min((width - padding * 2) / graphW, (height - padding * 2) / graphH)
+        )
+      );
+      const cx = (minX + maxX) / 2;
+      const cy = (minY + maxY) / 2;
+      const transform = d3.zoomIdentity
+        .translate(width / 2 - cx * scale, height / 2 - cy * scale)
+        .scale(scale);
+      svg.transition().duration(450).call(zoom.transform as any, transform);
     });
 
     if (focusedNodeId) {
