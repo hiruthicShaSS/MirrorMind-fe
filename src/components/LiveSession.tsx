@@ -4,13 +4,11 @@ import { useSessionContext } from '../context/SessionContext';
 import type { GraphData, LogMessage, Node, Edge } from '../types/api';
 
 interface LiveSessionProps {
-  graphData: GraphData;
   onGraphUpdate: (data: GraphData) => void;
   onLog: (message: LogMessage) => void;
 }
 
 export const LiveSession: React.FC<LiveSessionProps> = ({
-  graphData,
   onGraphUpdate,
   onLog,
 }) => {
@@ -126,12 +124,12 @@ export const LiveSession: React.FC<LiveSessionProps> = ({
   };
 
   const [isListening, setIsListening] = useState(false);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const recognitionRef = useRef<any>(null);
 
   const startListening = useCallback(() => {
     const SpeechRecognitionAPI =
-      (window as unknown as { SpeechRecognition?: typeof SpeechRecognition }).SpeechRecognition ||
-      (window as unknown as { webkitSpeechRecognition?: typeof SpeechRecognition }).webkitSpeechRecognition;
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
     if (!SpeechRecognitionAPI) {
       onLog({
         role: 'system',
@@ -144,7 +142,7 @@ export const LiveSession: React.FC<LiveSessionProps> = ({
     recognition.continuous = false;
     recognition.interimResults = false;
     recognition.lang = 'en-US';
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
+    recognition.onresult = (event: any) => {
       const transcript = event.results[event.results.length - 1][0].transcript;
       setUserInput((prev) => (prev ? `${prev} ${transcript}` : transcript));
     };

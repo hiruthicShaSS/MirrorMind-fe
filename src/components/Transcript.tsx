@@ -8,32 +8,6 @@ interface TranscriptProps {
   isStreaming?: boolean;
 }
 
-// Helper to bold keywords in text
-const BoldKeywords = ({ text }: { text: string }) => {
-  const keywords = [
-    'analysis', 'breathing', 'healthcare', 'recovery', 'performance',
-    'biofeedback', 'feasibility', 'concept', 'key observations',
-    'medical', 'therapeutic', 'improvement', 'focus', 'stress',
-    'exercise', 'meditation', 'data', 'metrics', 'insight'
-  ];
-
-  let result = text;
-  keywords.forEach((keyword) => {
-    const regex = new RegExp(`\\b(${keyword})\\b`, 'gi');
-    result = result.replace(
-      regex,
-      `<strong className="text-purple-300">$1</strong>`
-    );
-  });
-
-  return (
-    <div
-      dangerouslySetInnerHTML={{ __html: result }}
-      className="prose prose-invert max-w-none"
-    />
-  );
-};
-
 export const Transcript: React.FC<TranscriptProps> = ({ 
   logs, 
   streamingThought = '',

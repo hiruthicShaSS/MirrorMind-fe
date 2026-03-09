@@ -24,7 +24,7 @@ function AppContent() {
     nodes: [],
     edges: [],
   });
-  const [logs, setLogs] = useState<LogMessage[]>([]);
+  const [, setLogs] = useState<LogMessage[]>([]);
   const [isRightSidebarOpen, setRightSidebarOpen] = useState(true);
   const [isLeftSidebarOpen, setLeftSidebarOpen] = useState(false);
   const [showIntro, setShowIntro] = useState(true);
@@ -45,7 +45,7 @@ function AppContent() {
   const [nodeDetailsLoading, setNodeDetailsLoading] = useState(false);
 
   const { user, logout } = useAuth();
-  const { session, streaming, streamingThought, conceptMap, feasibilitySignal } = useSessionContext();
+  const { session, streaming, conceptMap, feasibilitySignal } = useSessionContext();
   const [syncingToNotion, setSyncingToNotion] = useState(false);
   const [liveConceptMap, setLiveConceptMap] = useState<Record<string, string[]>>({});
   const [liveFeasibilitySignal, setLiveFeasibilitySignal] = useState<number | null>(null);
