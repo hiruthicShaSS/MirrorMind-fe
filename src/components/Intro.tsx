@@ -298,7 +298,6 @@ export const Intro: React.FC<IntroProps> = ({ onComplete, onLogout }) => {
       wrapper: root,
       content: scrollContent,
       smoothWheel: true,
-      smoothTouch: true,
       lerp: 0.08,
       duration: 1.2,
     });
