@@ -1,11 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   syncSessionToNotion,
   getKnowledgeGraph,
   rebuildKnowledgeGraph,
   searchKnowledgeGraph,
   getKnowledgeGraphNodeDetails,
-  type KnowledgeGraphResponse,
   type KnowledgeGraphNodeDetails,
   type KnowledgeGraphSearchResult,
   type KnowledgeGraphRebuildStats,
@@ -13,9 +12,11 @@ import {
 import { MindMap } from './components/AgentChat';
 import { Intro } from './components/Intro';
 import LiveView from './components/LiveView';
+import { Login } from './components/Login';
+import { useAuth } from './context/AuthContext';
 import { useSessionContext } from './context/SessionContext';
 import type { GraphData, LogMessage } from './types/api';
-import { Layers, Share2, Menu, X, Home, Brain, Cpu, ChevronLeft, ChevronRight, Sparkles, Radio, Map } from 'lucide-react';
+import { Layers, Share2, Menu, X, Home, Brain, Cpu, ChevronLeft, ChevronRight, Sparkles, Radio, Map, LogOut } from 'lucide-react';
 
 function AppContent() {
   // State management for UI
@@ -43,62 +44,107 @@ function AppContent() {
   const [selectedKgNodeDetails, setSelectedKgNodeDetails] = useState<KnowledgeGraphNodeDetails | null>(null);
   const [nodeDetailsLoading, setNodeDetailsLoading] = useState(false);
 
+  const { user, logout } = useAuth();
   const { session, streaming, streamingThought, conceptMap, feasibilitySignal } = useSessionContext();
   const [syncingToNotion, setSyncingToNotion] = useState(false);
   const [liveConceptMap, setLiveConceptMap] = useState<Record<string, string[]>>({});
   const [liveFeasibilitySignal, setLiveFeasibilitySignal] = useState<number | null>(null);
+  const activeGraphMode: 'live' | 'knowledge' = session ? graphMode : 'knowledge';
+  const fallbackEncodedUserId = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    const fromQuery = new URLSearchParams(window.location.search).get('encodedUserId') || '';
+    const fromStorage =
+      window.localStorage.getItem('encodedUserId') ||
+      window.localStorage.getItem('ENCODED_USER_ID') ||
+      window.sessionStorage.getItem('encodedUserId') ||
+      window.sessionStorage.getItem('ENCODED_USER_ID') ||
+      '';
+    return (fromQuery || fromStorage || '').trim();
+  }, []);
+  const knowledgeEncodedUserId = (user?.encodedUserId || fallbackEncodedUserId || '').trim();
 
-  const mapKnowledgeGraph = (graph: KnowledgeGraphResponse): GraphData => ({
-    nodes: (graph.nodes || []).map((n) => {
-      const rawType = (n.type || '').toLowerCase();
-      return {
-        id: String(n.id),
-        label: n.label || n.name || String(n.id),
-        type: rawType.includes('concept') ? 'concept' : 'action',
-        weight: n.weight ?? 1,
-        rawType: n.type || 'term',
-        sessionIds: n.sessionIds || [],
-      };
-    }),
-    edges: (graph.edges || []).map((e) => ({
-      source: String(e.source),
-      target: String(e.target),
-      label: e.label || e.type || '',
-      relationType: e.type || e.label || '',
-      weight: e.weight ?? 1,
-    })),
-  });
+  const unwrapKnowledgeGraphPayload = (raw: any): { nodes: any[]; edges: any[] } => {
+    const candidates = [
+      raw,
+      raw?.data,
+      raw?.graph,
+      raw?.data?.graph,
+      raw?.knowledgeGraph,
+      raw?.data?.knowledgeGraph,
+      raw?.payload,
+      raw?.result,
+    ];
+    for (const c of candidates) {
+      if (c && Array.isArray(c.nodes) && Array.isArray(c.edges)) {
+        return { nodes: c.nodes, edges: c.edges };
+      }
+    }
+    return { nodes: [], edges: [] };
+  };
+
+  const mapKnowledgeGraph = (graph: unknown): GraphData => {
+    const payload = unwrapKnowledgeGraphPayload(graph as any);
+    return {
+      nodes: (payload.nodes || []).map((n: any) => {
+        const nodeId = n.id ?? n.nodeId ?? n._id ?? n.key ?? n.name;
+        const rawType = String(n.type ?? n.nodeType ?? n.kind ?? 'term').toLowerCase();
+        return {
+          id: String(nodeId),
+          label: n.label ?? n.name ?? n.title ?? n.text ?? String(nodeId),
+          type: rawType.includes('concept') ? 'concept' : 'action',
+          weight: Number(n.weight ?? n.score ?? n.count ?? 1),
+          rawType: String(n.type ?? n.nodeType ?? n.kind ?? 'term'),
+          sessionIds: (n.sessionIds ?? n.session_ids ?? n.sessions ?? []) as string[],
+        };
+      }),
+      edges: (payload.edges || []).map((e: any) => ({
+        source: String(e.source ?? e.sourceId ?? e.from ?? e.u ?? ''),
+        target: String(e.target ?? e.targetId ?? e.to ?? e.v ?? ''),
+        label: String(e.label ?? e.type ?? e.relation ?? ''),
+        relationType: String(e.type ?? e.relation ?? e.label ?? ''),
+        weight: Number(e.weight ?? e.score ?? e.count ?? 1),
+      })).filter((e) => e.source && e.target),
+    };
+  };
 
   const fetchKnowledgeGraphData = useCallback(async () => {
     setKnowledgeGraphLoading(true);
     try {
-      const res = await getKnowledgeGraph(300, 600);
+      const res = await getKnowledgeGraph(300, 600, knowledgeEncodedUserId || undefined);
       setKnowledgeGraphData(mapKnowledgeGraph(res));
       setKnowledgeGraphError(null);
     } catch (e) {
-      setKnowledgeGraphError(e instanceof Error ? e.message : 'Failed to load knowledge graph');
+      const base = e instanceof Error ? e.message : 'Failed to load knowledge graph';
+      setKnowledgeGraphError(base);
     } finally {
       setKnowledgeGraphLoading(false);
     }
-  }, []);
+  }, [knowledgeEncodedUserId]);
 
   const fetchNodeDetails = useCallback(async (nodeId: string) => {
     setNodeDetailsLoading(true);
     try {
-      const details = await getKnowledgeGraphNodeDetails(nodeId);
-      setSelectedKgNodeDetails(details);
+      const raw = await getKnowledgeGraphNodeDetails(nodeId, knowledgeEncodedUserId || undefined);
+      const unwrapped = (raw as any)?.data ?? raw;
+      setSelectedKgNodeDetails({
+        node: unwrapped?.node ?? unwrapped?.data?.node ?? {},
+        neighbors: unwrapped?.neighbors ?? unwrapped?.data?.neighbors ?? [],
+        edges: unwrapped?.edges ?? unwrapped?.data?.edges ?? [],
+        sessionIds: unwrapped?.sessionIds ?? unwrapped?.data?.sessionIds ?? unwrapped?.sessions ?? [],
+      });
     } catch (e) {
       setSelectedKgNodeDetails(null);
       setKnowledgeGraphError(e instanceof Error ? e.message : 'Failed to load node details');
     } finally {
       setNodeDetailsLoading(false);
     }
-  }, []);
+  }, [knowledgeEncodedUserId]);
 
   const handleRebuildKnowledgeGraph = useCallback(async () => {
     setKnowledgeRebuilding(true);
     try {
-      const stats = await rebuildKnowledgeGraph();
+      const raw = await rebuildKnowledgeGraph(knowledgeEncodedUserId || undefined);
+      const stats = ((raw as any)?.data ?? raw) as KnowledgeGraphRebuildStats;
       setKnowledgeStats(stats);
       setKnowledgeGraphError(null);
       await fetchKnowledgeGraphData();
@@ -107,7 +153,7 @@ function AppContent() {
     } finally {
       setKnowledgeRebuilding(false);
     }
-  }, [fetchKnowledgeGraphData]);
+  }, [fetchKnowledgeGraphData, knowledgeEncodedUserId]);
 
   // Initialize with root node
   useEffect(() => {
@@ -122,6 +168,10 @@ function AppContent() {
       fetchKnowledgeGraphData();
     }
   }, [graphMode, fetchKnowledgeGraphData]);
+
+  useEffect(() => {
+    fetchKnowledgeGraphData();
+  }, [fetchKnowledgeGraphData]);
 
   useEffect(() => {
     if (conceptMap && Object.keys(conceptMap).length > 0) {
@@ -139,8 +189,9 @@ function AppContent() {
     const timer = setTimeout(async () => {
       setKgSearchLoading(true);
       try {
-        const results = await searchKnowledgeGraph(q, 20);
-        setKgResults(results || []);
+        const raw = await searchKnowledgeGraph(q, 20, knowledgeEncodedUserId || undefined);
+        const results = ((raw as any)?.results ?? (raw as any)?.data?.results ?? (raw as any)?.data ?? raw) as KnowledgeGraphSearchResult[];
+        setKgResults(Array.isArray(results) ? results : []);
       } catch (e) {
         setKnowledgeGraphError(e instanceof Error ? e.message : 'Search failed');
       } finally {
@@ -148,7 +199,7 @@ function AppContent() {
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [kgQuery]);
+  }, [kgQuery, knowledgeEncodedUserId]);
 
   const handleSyncToNotion = async () => {
     if (!session?.id) {
@@ -180,7 +231,7 @@ function AppContent() {
   };
 
   return (
-    <div className="w-full h-screen bg-black text-white relative font-sans overflow-hidden">
+    <div className="w-full h-screen bg-black text-white relative font-sans overflow-x-hidden overflow-y-hidden">
       {/* Subtle grid pattern */}
       <div
         className="fixed inset-0 pointer-events-none z-0 opacity-10"
@@ -194,21 +245,21 @@ function AppContent() {
       {/* Intro Modal Overlay */}
       {showIntro && (
         <div className="absolute inset-0 z-40">
-          <Intro onComplete={() => setShowIntro(false)} />
+          <Intro onComplete={() => setShowIntro(false)} onLogout={() => void logout()} />
         </div>
       )}
 
       {/* Main Application Layout */}
       <div
-        className={`absolute inset-0 flex transition-opacity duration-1000 ${
+        className={`absolute inset-0 flex flex-col md:flex-row transition-opacity duration-1000 ${
           showIntro ? 'opacity-0 invisible pointer-events-none' : 'opacity-100 visible'
         }`}
       >
         {/* LEFT SIDEBAR - Collapsible */}
         <div
           className={`${
-            isLeftSidebarOpen ? 'w-64' : 'w-0'
-          } transition-all duration-300 ease-in-out border-r border-white/10 bg-white/5 backdrop-blur-xl flex flex-col h-full overflow-hidden`}
+            isLeftSidebarOpen ? 'w-full md:w-64 h-[40vh] md:h-full' : 'w-0 h-0 md:h-full'
+          } transition-all duration-300 ease-in-out border-r border-white/10 bg-white/5 backdrop-blur-xl flex flex-col overflow-hidden`}
         >
           {/* Sidebar Header */}
           <div className="p-6 border-b border-white/10">
@@ -239,9 +290,9 @@ function AppContent() {
         {/* CENTER MAIN AREA - MindMap Canvas */}
         <div className="flex-1 flex flex-col relative z-10">
           {/* Top Navigation Bar */}
-          <nav className="h-20 border-b border-white/15 bg-black/80 backdrop-blur-sm flex items-center justify-between px-8">
+          <nav className="min-h-16 md:h-20 border-b border-white/15 bg-black/80 backdrop-blur-sm flex items-center justify-between px-3 md:px-8 py-2 md:py-0 gap-2">
             {/* Left Nav Section */}
-            <div className="flex items-center gap-6">
+            <div className="flex items-center gap-2 md:gap-6 min-w-0">
               {/* Left Sidebar Toggle */}
               <button
                 onClick={() => setLeftSidebarOpen(!isLeftSidebarOpen)}
@@ -256,25 +307,25 @@ function AppContent() {
               </button>
 
               {/* Logo & Title */}
-              <div className="flex items-center gap-3">
-                <h1 className="text-xl font-bold tracking-tight">MIRROR.MIND</h1>
-                <span className="text-[10px] px-2 py-0.5 rounded-none border border-white/40 bg-white/10 uppercase tracking-widest font-mono">
+              <div className="flex items-center gap-2 md:gap-3 min-w-0">
+                <h1 className="text-sm md:text-xl font-bold tracking-tight truncate">MIRROR.MIND</h1>
+                <span className="hidden sm:inline text-[10px] px-2 py-0.5 rounded-none border border-white/40 bg-white/10 uppercase tracking-widest font-mono">
                   v1.0 alpha
                 </span>
               </div>
             </div>
 
             {/* Center - Status */}
-            <div className="absolute left-1/2 transform -translate-x-1/2 flex items-center gap-2">
+            <div className="hidden md:flex absolute left-1/2 transform -translate-x-1/2 items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-white animate-pulse" />
               <span className="text-sm text-gray-300">SYSTEM_ACTIVE</span>
             </div>
 
             {/* Right Nav Section - Action Buttons */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 md:gap-2 shrink-0">
               <button
                 onClick={() => setShowIntro(true)}
-                className="px-4 py-2 text-sm rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 transition-all hover:border-white/40"
+                className="px-2.5 md:px-4 py-2 text-xs md:text-sm rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 transition-all hover:border-white/40 shrink-0"
                 title="Back to home"
               >
                 <Home className="w-4 h-4" />
@@ -282,36 +333,44 @@ function AppContent() {
 
               <button
                 onClick={() => setGraphMode((prev) => (prev === 'knowledge' ? 'live' : 'knowledge'))}
-                className={`px-4 py-2 text-sm rounded-lg border transition-all flex items-center gap-2 ${
-                  graphMode === 'knowledge'
+                className={`px-2.5 md:px-4 py-2 text-xs md:text-sm rounded-lg border transition-all flex items-center gap-2 shrink-0 ${
+                  activeGraphMode === 'knowledge'
                     ? 'bg-green-500/20 border-green-400/60 text-green-200'
                     : 'bg-white/10 hover:bg-white/20 border-white/20 hover:border-white/40'
                 }`}
                 title="Toggle knowledge graph"
               >
                 <Map className="w-4 h-4" />
-                {graphMode === 'knowledge' ? 'Knowledge Graph' : 'Live Graph'}
+                <span className="hidden sm:inline">{activeGraphMode === 'knowledge' ? 'Knowledge Graph' : 'Live Graph'}</span>
               </button>
 
               <button
                 onClick={handleSyncToNotion}
                 disabled={!session?.id || syncingToNotion}
-                className="px-4 py-2 text-sm rounded-lg bg-white/5 hover:bg-white/10 border border-white/30 hover:border-white transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-2.5 md:px-4 py-2 text-xs md:text-sm rounded-lg bg-white/5 hover:bg-white/10 border border-white/30 hover:border-white transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
                 title="Sync to Notion"
               >
                 <Share2 className="w-4 h-4" />
-                {syncingToNotion ? 'Syncing...' : 'Sync to Notion'}
+                <span className="hidden sm:inline">{syncingToNotion ? 'Syncing...' : 'Sync to Notion'}</span>
               </button>
 
               <button
                 onClick={() => setRightSidebarOpen(!isRightSidebarOpen)}
-                className="px-4 py-2 text-sm rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 transition-all hover:border-white/40"
+                className="px-2.5 md:px-4 py-2 text-xs md:text-sm rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 transition-all hover:border-white/40 shrink-0"
               >
                 {isRightSidebarOpen ? (
                   <Layers className="w-4 h-4" />
                 ) : (
                   <Menu className="w-4 h-4" />
                 )}
+              </button>
+
+              <button
+                onClick={() => void logout()}
+                className="px-2.5 md:px-4 py-2 text-xs md:text-sm rounded-lg bg-red-500/10 hover:bg-red-500/20 border border-red-400/30 text-red-200 transition-all shrink-0"
+                title="Logout"
+              >
+                <LogOut className="w-4 h-4" />
               </button>
             </div>
           </nav>
@@ -328,10 +387,10 @@ function AppContent() {
             {/* MindMap Component */}
             <div className="absolute inset-0 z-0">
               <MindMap
-                data={graphMode === 'knowledge' ? knowledgeGraphData : graphData}
-                mode={graphMode === 'knowledge' ? 'knowledge' : 'default'}
-                focusedNodeId={graphMode === 'knowledge' ? focusedKgNodeId : null}
-                onNodeClick={graphMode === 'knowledge'
+                data={activeGraphMode === 'knowledge' ? knowledgeGraphData : graphData}
+                mode={activeGraphMode === 'knowledge' ? 'knowledge' : 'default'}
+                focusedNodeId={activeGraphMode === 'knowledge' ? focusedKgNodeId : null}
+                onNodeClick={activeGraphMode === 'knowledge'
                   ? (node) => {
                       setSelectedKgNodeId(node.id);
                       setFocusedKgNodeId(node.id);
@@ -348,8 +407,8 @@ function AppContent() {
         {/* RIGHT SIDEBAR - Live, Concept Map, Analytics */}
         <div
           className={`${
-            isRightSidebarOpen ? 'w-screen sm:w-[480px] lg:w-[520px]' : 'w-0'
-          } transition-all duration-300 ease-in-out border-l border-white/10 bg-gradient-to-b from-black via-gray-950 to-black backdrop-blur-xl flex flex-col h-full overflow-hidden relative`}
+            isRightSidebarOpen ? 'w-full md:w-[480px] lg:w-[520px] h-[55vh] md:h-full' : 'w-0 h-0 md:h-full'
+          } md:relative absolute bottom-0 right-0 z-30 transition-all duration-300 ease-in-out border-l border-white/10 bg-gradient-to-b from-black via-gray-950 to-black backdrop-blur-xl flex flex-col overflow-hidden`}
         >
           {/* Close Button */}
           {isRightSidebarOpen && (
@@ -377,7 +436,7 @@ function AppContent() {
               />
             </div>
           </div>
-          <div className={`${graphMode === 'knowledge' ? 'h-[46%]' : 'flex-1'} overflow-hidden`}>
+          <div className={`${activeGraphMode === 'knowledge' ? 'h-[42%] md:h-[46%]' : 'flex-1'} overflow-hidden`}>
             <LiveView
               onGraphUpdate={(newData) => setGraphData(newData)}
               onLog={(msg) => setLogs((prev) => [...prev, msg])}
@@ -408,7 +467,7 @@ function AppContent() {
                 Open
               </button>
             </div>
-            <div className="px-4 pb-4 space-y-3 max-h-[34vh] overflow-y-auto">
+            <div className="px-3 md:px-4 pb-4 space-y-3 max-h-[34vh] md:max-h-[40vh] overflow-y-auto">
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -453,7 +512,7 @@ function AppContent() {
                 </div>
               )}
 
-              {graphMode === 'knowledge' && !knowledgeGraphLoading && knowledgeGraphData.nodes.length === 0 && (
+              {activeGraphMode === 'knowledge' && !knowledgeGraphLoading && knowledgeGraphData.nodes.length === 0 && (
                 <div className="text-xs text-gray-400 border border-white/10 bg-white/5 p-3">
                   No graph yet. Start a conversation.
                 </div>
@@ -704,7 +763,7 @@ function AppContent() {
                       Active Nodes
                     </span>
                     <span className="text-lg font-bold text-white">
-                      {String((graphMode === 'knowledge' ? knowledgeGraphData.nodes.length : graphData.nodes.length)).padStart(3, '0')}
+                      {String((activeGraphMode === 'knowledge' ? knowledgeGraphData.nodes.length : graphData.nodes.length)).padStart(3, '0')}
                     </span>
                   </div>
                 </div>
@@ -718,6 +777,20 @@ function AppContent() {
 }
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="w-full h-screen bg-black text-white flex items-center justify-center font-mono">
+        <div className="text-xs uppercase tracking-wider text-gray-400">Checking session...</div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Login />;
+  }
+
   return <>{children}</>;
 }
 

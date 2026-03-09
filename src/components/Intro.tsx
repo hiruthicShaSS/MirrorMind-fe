@@ -16,10 +16,12 @@ import {
   Share2,
   Terminal,
   Fingerprint,
+  LogOut,
 } from 'lucide-react';
 
 interface IntroProps {
   onComplete: () => void;
+  onLogout?: () => void;
 }
 
 const ScrollFade = ({
@@ -209,7 +211,7 @@ const TypingText = ({
   );
 };
 
-export const Intro: React.FC<IntroProps> = ({ onComplete }) => {
+export const Intro: React.FC<IntroProps> = ({ onComplete, onLogout }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const { scrollYProgress } = useScroll({
@@ -241,12 +243,12 @@ export const Intro: React.FC<IntroProps> = ({ onComplete }) => {
       />
       <div className="fixed inset-0 pointer-events-none z-50 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_2px,3px_100%]" />
 
-      <nav className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4 bg-black/80 backdrop-blur-xl border-b border-white/10">
-        <div className="flex items-center gap-3 group cursor-pointer">
-          <div className="w-8 h-8 bg-white text-black flex items-center justify-center rounded-none hover:rotate-90 transition-transform duration-500">
+      <nav className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-3 sm:px-6 py-3 sm:py-4 bg-black/80 backdrop-blur-xl border-b border-white/10 gap-2">
+        <div className="flex items-center gap-2 sm:gap-3 group cursor-pointer min-w-0">
+          <div className="w-8 h-8 bg-white text-black flex items-center justify-center rounded-none hover:rotate-90 transition-transform duration-500 shrink-0">
             <Brain className="w-5 h-5" />
           </div>
-          <span className="font-bold text-lg tracking-tighter">MIRROR.MIND</span>
+          <span className="font-bold text-base sm:text-lg tracking-tighter truncate">MIRROR.MIND</span>
         </div>
         <div className="hidden md:flex items-center gap-8 text-xs font-bold text-gray-400">
           <a href="#features" className="hover:text-white transition-colors uppercase tracking-widest">
@@ -259,12 +261,25 @@ export const Intro: React.FC<IntroProps> = ({ onComplete }) => {
             [ ACCESS ]
           </a>
         </div>
-        <button
-          onClick={onComplete}
-          className="px-6 py-2 text-xs font-bold bg-white/10 backdrop-blur-md text-white hover:bg-white hover:text-black transition-all border border-white/50 hover:border-white uppercase tracking-wider"
-        >
-          Initialize_Session
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              className="px-2 sm:px-3 py-2 text-[10px] font-bold bg-red-500/10 text-red-200 hover:bg-red-500/20 transition-all border border-red-400/30 uppercase tracking-wider flex items-center gap-1"
+              title="Logout"
+            >
+              <LogOut className="w-3 h-3" />
+              <span className="hidden sm:inline">Logout</span>
+            </button>
+          )}
+          <button
+            onClick={onComplete}
+            className="px-3 sm:px-6 py-2 text-[10px] sm:text-xs font-bold bg-white/10 backdrop-blur-md text-white hover:bg-white hover:text-black transition-all border border-white/50 hover:border-white uppercase tracking-wider"
+          >
+            <span className="sm:hidden">Start</span>
+            <span className="hidden sm:inline">Initialize_Session</span>
+          </button>
+        </div>
       </nav>
 
       {/* Laptop hero */}
@@ -275,7 +290,7 @@ export const Intro: React.FC<IntroProps> = ({ onComplete }) => {
             className="relative"
           >
             <div className="relative">
-              <div className="w-[600px] md:w-[800px] h-[375px] md:h-[500px] bg-gradient-to-b from-gray-900 to-black rounded-t-lg border-[8px] border-gray-800 relative overflow-hidden shadow-2xl shadow-white/5">
+              <div className="w-[92vw] max-w-[600px] md:w-[800px] h-[56vw] max-h-[375px] md:h-[500px] bg-gradient-to-b from-gray-900 to-black rounded-t-lg border-[6px] md:border-[8px] border-gray-800 relative overflow-hidden shadow-2xl shadow-white/5">
                 <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent pointer-events-none" />
                 <div className="absolute inset-4 bg-black rounded border border-white/10 flex flex-col">
                   <div className="flex items-center gap-2 px-4 py-2 bg-gray-900/80 border-b border-white/10">
@@ -293,10 +308,10 @@ export const Intro: React.FC<IntroProps> = ({ onComplete }) => {
                 </div>
                 <div className="absolute inset-0 bg-gradient-to-t from-blue-500/5 to-transparent pointer-events-none" />
               </div>
-              <div className="w-[650px] md:w-[850px] h-4 bg-gradient-to-b from-gray-700 to-gray-800 rounded-b-lg mx-auto relative">
+              <div className="w-[96vw] max-w-[650px] md:w-[850px] h-4 bg-gradient-to-b from-gray-700 to-gray-800 rounded-b-lg mx-auto relative">
                 <div className="absolute top-0 left-1/2 -translate-x-1/2 w-24 h-1 bg-gray-600 rounded-b" />
               </div>
-              <div className="w-[700px] md:w-[900px] h-2 bg-gradient-to-b from-gray-800 to-gray-900 rounded-b-xl mx-auto" />
+              <div className="w-[98vw] max-w-[700px] md:w-[900px] h-2 bg-gradient-to-b from-gray-800 to-gray-900 rounded-b-xl mx-auto" />
             </div>
           </motion.div>
 

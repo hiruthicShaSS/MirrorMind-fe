@@ -12,29 +12,50 @@ export function getLiveWebSocketUrl(): string {
 
 const defaultOptions: RequestInit = {
   credentials: "include",
-  headers: { "Content-Type": "application/json" },
 };
 
 export async function api<T = unknown>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const url = `${API_BASE}${path}`;
+  const method = (options.method || "GET").toUpperCase();
+  const hasBody = options.body != null;
+  const mergedHeaders = { ...(options.headers || {}) } as Record<string, string>;
+  // Avoid forcing Content-Type on GET/HEAD to reduce CORS preflight noise.
+  if (hasBody && !mergedHeaders["Content-Type"] && !mergedHeaders["content-type"]) {
+    mergedHeaders["Content-Type"] = "application/json";
+  }
+
+  const res = await fetch(url, {
     ...defaultOptions,
     ...options,
-    headers: { ...defaultOptions.headers, ...options.headers } as HeadersInit,
+    method,
+    headers: mergedHeaders as HeadersInit,
   });
-  const data = await res.json().catch(() => ({}));
+
+  let parsed: unknown = {};
+  let textBody = "";
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    parsed = await res.json().catch(() => ({}));
+  } else {
+    textBody = await res.text().catch(() => "");
+    parsed = textBody ? { message: textBody } : {};
+  }
+
   if (!res.ok) {
+    const data = parsed as { message?: string; error?: string };
+    const serverMessage = data.message || data.error || textBody || "Request failed";
     throw new Error(
-      (data as { message?: string }).message || (data as { error?: string }).error || "Request failed"
+      `HTTP ${res.status} ${res.statusText} at ${url}: ${serverMessage}`
     );
   }
-  return data as T;
+  return parsed as T;
 }
 
 // --- Auth (email/password + session cookie) ---
-export type User = { id: string; email: string; name: string; picture?: string };
+export type User = { id: string; email: string; name: string; picture?: string; encodedUserId?: string };
 
 export async function register(email: string, password: string, name?: string) {
   return api<{ message: string; email: string }>("/api/auth/register", {
@@ -47,6 +68,13 @@ export async function login(email: string, password: string) {
   return api<User>("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function loginWithGoogle(idToken: string) {
+  return api<User>("/api/auth/google", {
+    method: "POST",
+    body: JSON.stringify({ idToken }),
   });
 }
 
@@ -196,27 +224,43 @@ export type KnowledgeGraphNodeDetails = {
   sessionIds: string[];
 };
 
-export async function getKnowledgeGraph(limitNodes = 300, limitEdges = 600) {
+export async function getKnowledgeGraph(limitNodes = 300, limitEdges = 600, encodedUserId?: string) {
+  const qs = new URLSearchParams({
+    limitNodes: String(limitNodes),
+    limitEdges: String(limitEdges),
+  });
+  if (encodedUserId) qs.set("encodedUserId", encodedUserId);
   return api<KnowledgeGraphResponse>(
-    `/api/agent/knowledge-graph?limitNodes=${limitNodes}&limitEdges=${limitEdges}`
+    `/api/agent/knowledge-graph?${qs.toString()}`
   );
 }
 
-export async function rebuildKnowledgeGraph() {
-  return api<KnowledgeGraphRebuildStats>(`/api/agent/knowledge-graph/rebuild`, {
+export async function rebuildKnowledgeGraph(encodedUserId?: string) {
+  const qs = new URLSearchParams();
+  if (encodedUserId) qs.set("encodedUserId", encodedUserId);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return api<KnowledgeGraphRebuildStats>(`/api/agent/knowledge-graph/rebuild${suffix}`, {
     method: "POST",
   });
 }
 
-export async function searchKnowledgeGraph(q: string, limit = 20) {
+export async function searchKnowledgeGraph(q: string, limit = 20, encodedUserId?: string) {
+  const qs = new URLSearchParams({
+    q,
+    limit: String(limit),
+  });
+  if (encodedUserId) qs.set("encodedUserId", encodedUserId);
   return api<KnowledgeGraphSearchResult[]>(
-    `/api/agent/knowledge-graph/search?q=${encodeURIComponent(q)}&limit=${limit}`
+    `/api/agent/knowledge-graph/search?${qs.toString()}`
   );
 }
 
-export async function getKnowledgeGraphNodeDetails(nodeId: string) {
+export async function getKnowledgeGraphNodeDetails(nodeId: string, encodedUserId?: string) {
+  const qs = new URLSearchParams();
+  if (encodedUserId) qs.set("encodedUserId", encodedUserId);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
   return api<KnowledgeGraphNodeDetails>(
-    `/api/agent/knowledge-graph/node/${encodeURIComponent(nodeId)}`
+    `/api/agent/knowledge-graph/node/${encodeURIComponent(nodeId)}${suffix}`
   );
 }
 
