@@ -135,6 +135,126 @@ export async function closeSession(sessionId: string) {
   });
 }
 
+export type PocFileSnippet = {
+  path?: string;
+  filename?: string;
+  language?: string;
+  content?: string;
+  code?: string;
+  snippet?: string;
+};
+
+export type PocDraft = {
+  summary: string;
+  backendPlan: string[];
+  frontendPlan: string[];
+  files: PocFileSnippet[];
+  aiStudioLink?: string;
+};
+
+export type PocNotification = {
+  status?: string;
+  message?: string;
+  email?: string;
+  sentAt?: string;
+  delivered?: boolean;
+};
+
+export type PocPayload = {
+  idea?: string;
+  techStack: string[];
+  productType?: string;
+  targetUsers?: string;
+  notificationEmail?: string;
+  aiStudioLink?: string;
+  aiStudioApiKey?: string;
+};
+
+export type PocGithubPublishPayload = {
+  repoName: string;
+  owner?: string;
+  visibility?: "public" | "private";
+  branch?: string;
+};
+
+export type GithubStatusResponse = {
+  connected: boolean;
+  login?: string;
+  defaultOwner?: string;
+  defaultRepo?: string;
+};
+
+export type GithubDefaultRepoPayload = {
+  owner: string;
+  repo: string;
+};
+
+export async function createSessionPoc(sessionId: string, payload: PocPayload) {
+  return api<unknown>(`/api/agent/sessions/${sessionId}/poc`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getSessionPoc(sessionId: string) {
+  return api<unknown>(`/api/agent/sessions/${sessionId}/poc`);
+}
+
+export async function resendSessionPocNotification(sessionId: string) {
+  return api<unknown>(`/api/agent/sessions/${sessionId}/poc/notify`, {
+    method: "POST",
+  });
+}
+
+export async function exportSessionPoc(sessionId: string) {
+  const res = await fetch(`${API_BASE}/api/agent/sessions/${sessionId}/poc/export`, {
+    method: "GET",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Export failed: ${res.status} ${res.statusText}`);
+  }
+  const blob = await res.blob();
+  const contentDisposition = res.headers.get("content-disposition") || "";
+  const filenameMatch = contentDisposition.match(/filename\*?=(?:UTF-8''|")?([^\";]+)/i);
+  const fileName = filenameMatch ? decodeURIComponent(filenameMatch[1].replace(/"/g, "")) : "poc-export.zip";
+  return { blob, fileName };
+}
+
+export async function publishSessionPocToGithub(
+  sessionId: string,
+  payload: PocGithubPublishPayload
+) {
+  return api<unknown>(`/api/agent/sessions/${sessionId}/poc/github`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getGithubStatus() {
+  return api<GithubStatusResponse>("/api/github/status");
+}
+
+export async function setGithubDefaultRepo(payload: GithubDefaultRepoPayload) {
+  return api<GithubStatusResponse>("/api/github/default-repo", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getOauthStartUrl(service: "github", redirectTo?: string) {
+  const redirect =
+    redirectTo ||
+    (typeof window !== "undefined"
+      ? `${window.location.origin}/auth/github/callback`
+      : "http://localhost:5173/auth/github/callback");
+
+  return `${API_BASE}/api/oauth/start?service=${service}&redirectTo=${encodeURIComponent(
+    redirect
+  )}`;
+}
+
 // Get all user sessions (with concept maps)
 export async function getAllSessions(limit = 50) {
   return api<SessionResponse[]>(`/api/agent/sessions?limit=${limit}`);
