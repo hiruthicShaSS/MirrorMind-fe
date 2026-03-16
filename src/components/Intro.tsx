@@ -415,7 +415,14 @@ export const Intro: React.FC<IntroProps> = ({ onComplete, onLogout }) => {
                   Logout
                 </button>
               )}
-              <button type="button" className="hyper-enter-button" onClick={onComplete}>
+              <button
+                type="button"
+                className="hyper-enter-button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  onComplete();
+                }}
+              >
                 <Play size={14} />
                 Enter System
               </button>
