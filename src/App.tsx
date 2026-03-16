@@ -30,6 +30,7 @@ function AppContent() {
   const [showIntro, setShowIntro] = useState(true);
   const [showConceptMapModal, setShowConceptMapModal] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(true);
+  const [isLiveOverlayVisible, setIsLiveOverlayVisible] = useState(false);
   const [graphMode, setGraphMode] = useState<'live' | 'knowledge'>('live');
   const [knowledgeGraphData, setKnowledgeGraphData] = useState<GraphData>({ nodes: [], edges: [] });
   const [knowledgeGraphLoading, setKnowledgeGraphLoading] = useState(false);
@@ -45,7 +46,7 @@ function AppContent() {
   const [nodeDetailsLoading, setNodeDetailsLoading] = useState(false);
 
   const { user, logout } = useAuth();
-  const { session, streaming, conceptMap, feasibilitySignal } = useSessionContext();
+  const { session, loading, streaming, conceptMap, feasibilitySignal, initializeSession } = useSessionContext();
   const [syncingToNotion, setSyncingToNotion] = useState(false);
   const [liveConceptMap, setLiveConceptMap] = useState<Record<string, string[]>>({});
   const [liveFeasibilitySignal, setLiveFeasibilitySignal] = useState<number | null>(null);
@@ -178,6 +179,17 @@ function AppContent() {
       fetchKnowledgeGraphData();
     }
   }, [conceptMap, fetchKnowledgeGraphData]);
+
+  useEffect(() => {
+    if (!session?.id) {
+      setIsLiveOverlayVisible(false);
+    }
+  }, [session?.id]);
+
+  const handleStartLiveSession = async () => {
+    await initializeSession();
+    setIsLiveOverlayVisible(true);
+  };
 
   useEffect(() => {
     const q = kgQuery.trim();
@@ -399,6 +411,7 @@ function AppContent() {
                   : undefined}
               />
             </div>
+
           </div>
 
           {/* Bottom Control Panel removed; Live interactions happen in the right sidebar */}
@@ -422,7 +435,7 @@ function AppContent() {
             </div>
           )}
 
-          {/* Live Content */}
+          {/* Live Status */}
           <div className="border-b border-white/20 bg-black/60">
             <div className="flex items-center gap-2 px-4 py-3">
               <Radio className="w-4 h-4 text-white" />
@@ -431,23 +444,38 @@ function AppContent() {
               </h3>
               <div
                 className={`ml-auto w-2 h-2 rounded-full ${
-                  streaming ? 'bg-white animate-pulse' : 'bg-white/30'
+                  streaming ? 'bg-white animate-pulse' : session?.id ? 'bg-white/70' : 'bg-white/30'
                 }`}
               />
             </div>
           </div>
-          <div className={`${activeGraphMode === 'knowledge' ? 'h-[42%] md:h-[46%]' : 'flex-1'} overflow-hidden`}>
-            <LiveView
-              onGraphUpdate={(newData) => setGraphData(newData)}
-              onLog={(msg) => setLogs((prev) => [...prev, msg])}
-              onTurnComplete={() => {
-                fetchKnowledgeGraphData();
-              }}
-              onConceptMapUpdate={(map, feas) => {
-                setLiveConceptMap(map || {});
-                setLiveFeasibilitySignal(feas ?? null);
-              }}
-            />
+          <div className="px-4 py-4 border-b border-white/10 bg-black/40">
+            {!session?.id ? (
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                <div className="text-[11px] uppercase tracking-[0.24em] text-gray-500">No active session</div>
+                <div className="mt-2 text-sm text-white">Start a session to launch the live chat overlay.</div>
+                <button
+                  type="button"
+                  onClick={() => void handleStartLiveSession()}
+                  disabled={loading}
+                  className="mt-4 w-full rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {loading ? 'Starting...' : 'Start session'}
+                </button>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                <div className="text-[11px] uppercase tracking-[0.24em] text-gray-500">Session active</div>
+                <div className="mt-2 text-sm text-white">The live chat opens above the graph and can be minimized at any time.</div>
+                <button
+                  type="button"
+                  onClick={() => setIsLiveOverlayVisible(true)}
+                  className="mt-4 w-full rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-xs font-bold uppercase tracking-wider text-white hover:bg-white/20"
+                >
+                  Open live chat
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="border-t border-white/10 bg-black/60">
@@ -772,6 +800,43 @@ function AppContent() {
           </div>
         </div>
       </div>
+
+      {session?.id && (
+        <div
+          className={`fixed inset-0 z-[120] flex items-center justify-center p-4 md:p-8 transition-opacity duration-200 ${
+            isLiveOverlayVisible ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'
+          }`}
+        >
+          <div className="absolute inset-0 bg-black/45 backdrop-blur-xl" />
+          <div className="relative h-full w-full">
+            <LiveView
+              onGraphUpdate={(newData) => setGraphData(newData)}
+              onLog={(msg) => setLogs((prev) => [...prev, msg])}
+              onTurnComplete={() => {
+                fetchKnowledgeGraphData();
+              }}
+              onConceptMapUpdate={(map, feas) => {
+                setLiveConceptMap(map || {});
+                setLiveFeasibilitySignal(feas ?? null);
+              }}
+              onMinimize={() => setIsLiveOverlayVisible(false)}
+              onClose={() => setIsLiveOverlayVisible(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {session?.id && !isLiveOverlayVisible && (
+        <div className="fixed bottom-4 right-4 z-[110]">
+          <button
+            type="button"
+            onClick={() => setIsLiveOverlayVisible(true)}
+            className="rounded-2xl border border-white/15 bg-black/80 px-4 py-3 text-xs uppercase tracking-wider text-white shadow-xl backdrop-blur-md hover:bg-black"
+          >
+            Open live chat
+          </button>
+        </div>
+      )}
     </div>
   );
 }
