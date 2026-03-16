@@ -16,7 +16,7 @@ import { Login } from './components/Login';
 import { useAuth } from './context/AuthContext';
 import { useSessionContext } from './context/SessionContext';
 import type { GraphData, LogMessage } from './types/api';
-import { Layers, Share2, Menu, X, Home, Brain, Cpu, ChevronLeft, ChevronRight, Sparkles, Radio, Map, LogOut } from 'lucide-react';
+import { Layers, Share2, Menu, X, Home, Brain, Cpu, ChevronLeft, ChevronRight, Sparkles, Radio, Map, LogOut, LogIn } from 'lucide-react';
 
 function AppContent() {
   // State management for UI
@@ -44,6 +44,7 @@ function AppContent() {
   const [selectedKgNodeId, setSelectedKgNodeId] = useState<string | null>(null);
   const [selectedKgNodeDetails, setSelectedKgNodeDetails] = useState<KnowledgeGraphNodeDetails | null>(null);
   const [nodeDetailsLoading, setNodeDetailsLoading] = useState(false);
+  const [showLoginOverlay, setShowLoginOverlay] = useState(false);
 
   const { user, logout } = useAuth();
   const { session, loading, streaming, conceptMap, feasibilitySignal, initializeSession } = useSessionContext();
@@ -375,6 +376,14 @@ function AppContent() {
                 ) : (
                   <Menu className="w-4 h-4" />
                 )}
+              </button>
+
+              <button
+                onClick={() => setShowLoginOverlay(true)}
+                className="px-2.5 md:px-4 py-2 text-xs md:text-sm rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 transition-all hover:border-white/40 shrink-0"
+                title="Open login screen"
+              >
+                <LogIn className="w-4 h-4" />
               </button>
 
               <button
@@ -800,6 +809,12 @@ function AppContent() {
           </div>
         </div>
       </div>
+
+      {showLoginOverlay && (
+        <div className="fixed inset-0 z-[130]">
+          <Login onClose={() => setShowLoginOverlay(false)} />
+        </div>
+      )}
 
       {session?.id && (
         <div

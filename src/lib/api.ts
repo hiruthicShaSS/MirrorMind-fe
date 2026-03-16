@@ -200,6 +200,7 @@ export async function getSessionPoc(sessionId: string) {
   return api<unknown>(`/api/agent/sessions/${sessionId}/poc`);
 }
 
+// --- POC / PR history ---
 export async function resendSessionPocNotification(sessionId: string) {
   return api<unknown>(`/api/agent/sessions/${sessionId}/poc/notify`, {
     method: "POST",
