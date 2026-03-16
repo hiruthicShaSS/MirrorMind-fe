@@ -8,17 +8,9 @@ import type {
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-// Log API connection status
-console.log('🔗 API Base URL:', API_BASE_URL);
-
-// Helper function to log API errors gracefully
-function logApiError(error: Error, endpoint: string) {
-  if (error.message.includes('Failed to fetch') || error.message.includes('CORS')) {
-    console.warn(`⚠️  Cannot reach backend at ${API_BASE_URL}${endpoint}`);
-    console.warn('💡 Tip: Make sure backend is running with CORS enabled');
-  } else {
-    console.error(`❌ API Error (${endpoint}):`, error.message);
-  }
+// Helper function to keep console clean
+function logApiError(_error: Error, _endpoint: string) {
+  // intentionally silent
 }
 
 export const apiClient = {
@@ -139,8 +131,8 @@ export const apiClient = {
               | ThinkStreamChunk
               | ThinkStreamComplete;
             yield chunk;
-          } catch (e) {
-            console.error('Failed to parse SSE chunk:', line, e);
+          } catch {
+            // ignore malformed chunk
           }
         }
       }
@@ -152,8 +144,8 @@ export const apiClient = {
             | ThinkStreamChunk
             | ThinkStreamComplete;
           yield chunk;
-        } catch (e) {
-          console.error('Failed to parse final SSE chunk:', buffer, e);
+        } catch {
+          // ignore malformed final chunk
         }
       }
     } finally {
@@ -162,7 +154,6 @@ export const apiClient = {
     } catch (error) {
       logApiError(error as Error, `/api/agent/sessions/${sessionId}/think`);
       // Yield demo response as fallback
-      console.log('💡 Demo mode: Yielding simulated thinking...');
       yield {
         chunk: `Analyzing: "${body.userInput}"... [DEMO MODE - Backend not connected]`,
       };
@@ -195,3 +186,4 @@ export const apiClient = {
     }
   },
 };
+

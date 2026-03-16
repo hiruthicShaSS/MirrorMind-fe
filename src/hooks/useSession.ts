@@ -57,7 +57,7 @@ export function useSession(): UseSessionState & UseSessionActions {
         loading: false,
       }));
     } catch (err) {
-      console.warn('Backend session creation failed, using demo session:', err);
+      // backend session creation failed; falling back to demo session
       const demoSession: SessionResponse = {
         id: `demo-${Date.now()}`,
         createdAt: new Date().toISOString(),
@@ -81,7 +81,7 @@ export function useSession(): UseSessionState & UseSessionActions {
     try {
       await apiCloseSession(currentSession.id);
     } catch (err) {
-      console.warn('End session request failed:', err);
+      // swallow end-session failure; session cleanup will proceed locally
     }
     setState((prev) => ({
       ...prev,
@@ -188,7 +188,7 @@ export function useSession(): UseSessionState & UseSessionActions {
         }));
         return finalText;
       } catch (err) {
-        console.error('Think error:', err);
+        // ignore think error; retry logic handles failures
         setState((prev) => ({
           ...prev,
           streaming: false,

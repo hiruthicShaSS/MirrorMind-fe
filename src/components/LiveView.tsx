@@ -18,7 +18,9 @@ import {
   type PocNotification,
   type PocPayload,
 } from '../lib/api';
+import { buildReferenceLinks } from '../lib/referenceSearch';
 import type { GraphData, LogMessage, Node, Edge } from '../types/api';
+import React from 'react';
 
 interface LiveViewProps {
   onGraphUpdate?: (data: GraphData) => void;
@@ -49,6 +51,7 @@ const TECH_STACK_OPTIONS = [
   'Next.js',
   'TypeScript',
   'Firebase',
+  'Supabase',
   'PostgreSQL',
   'MongoDB',
   'Tailwind',
@@ -57,6 +60,18 @@ const TECH_STACK_OPTIONS = [
 
 const PRODUCT_TYPES = ['SaaS', 'Marketplace', 'Mobile App', 'Internal Tool', 'API Product'];
 const AI_STUDIO_API_KEY_STORAGE_KEY = 'mm_ai_studio_api_key';
+const DEFAULT_TECH_STACK = ['Node.js', 'React'];
+const DEFAULT_TARGET_USERS = 'Startup founders';
+const DEFAULT_PRODUCT_TYPE = 'SaaS';
+const parseStackFromText = (text: string): string[] => {
+  if (!text) return [];
+  const lower = text.toLowerCase();
+  const matches = TECH_STACK_OPTIONS.filter((opt) => {
+    const key = opt.toLowerCase().replace('.js', '');
+    return lower.includes(key);
+  });
+  return Array.from(new Set(matches));
+};
 
 function redactSensitive(message: string): string {
   if (!message) return message;
@@ -304,6 +319,8 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
   const voiceTranscriptRef = useRef('');
   const messagesRef = useRef<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
   const replyRef = useRef('');
+  const lastUserMessageRef = useRef('');
+  const lastProcessedUserMessageRef = useRef('');
   const [stableConceptMap, setStableConceptMap] = useState<Record<string, string[]>>({});
   const [selectedTechStack, setSelectedTechStack] = useState<string[]>(['Node.js', 'React']);
   const [productType, setProductType] = useState('SaaS');
@@ -312,11 +329,16 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
   const [aiStudioLink, setAiStudioLink] = useState('');
   const [aiStudioApiKey, setAiStudioApiKey] = useState('');
   const [rememberApiKey, setRememberApiKey] = useState(false);
+  const [userEditedIdea, setUserEditedIdea] = useState(false);
+  const [userEditedStack, setUserEditedStack] = useState(false);
+  const [userEditedTargetUsers, setUserEditedTargetUsers] = useState(false);
+  const [userEditedProductType, setUserEditedProductType] = useState(false);
   const [apiKeyInlineError, setApiKeyInlineError] = useState<string | null>(null);
   const [pocIdea, setPocIdea] = useState('');
   const [pocLoading, setPocLoading] = useState(false);
   const [pocHydrating, setPocHydrating] = useState(false);
   const [pocError, setPocError] = useState<string | null>(null);
+  const [pocGenerated, setPocGenerated] = useState(false);
   const [pocData, setPocData] = useState<PocView | null>(null);
   const [resendingNotification, setResendingNotification] = useState(false);
   const [showPocPanel, setShowPocPanel] = useState(false);
@@ -327,41 +349,87 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
   const [savingGithubRepo, setSavingGithubRepo] = useState(false);
   const [githubStatusError, setGithubStatusError] = useState<string | null>(null);
   const [githubOauthStatus, setGithubOauthStatus] = useState<string | null>(null);
-  const [githubDefaultOwnerInput, setGithubDefaultOwnerInput] = useState('Harini-Sha');
-  const [githubDefaultRepoInput, setGithubDefaultRepoInput] = useState('test');
+  const [githubDefaultOwnerInput, setGithubDefaultOwnerInput] = useState('');
+  const [githubDefaultRepoInput, setGithubDefaultRepoInput] = useState('');
   const [showGithubModal, setShowGithubModal] = useState(false);
   const previousPocIntentRef = useRef(false);
+  const autoPocTriggeredRef = useRef(false);
   const githubOauthWindowRef = useRef<Window | null>(null);
   const githubPollIntervalRef = useRef<number | null>(null);
+  const [showGenerateCta, setShowGenerateCta] = useState(false);
+  const [showPocWorkspace, setShowPocWorkspace] = useState(false);
+  const [generationRequested, setGenerationRequested] = useState(false);
+  const [showPocDetails, setShowPocDetails] = useState(true);
+
+  const lastGraphSignatureRef = useRef<string>('');
+
+  const pushGraphUpdate = useCallback(
+    (map?: Record<string, string[]>) => {
+      if (!onGraphUpdate) return;
+      const normalized = normalizeConceptMap(map || {});
+      if (!normalized || Object.keys(normalized).length === 0) return;
+
+      const signature = JSON.stringify(normalized);
+      if (signature === lastGraphSignatureRef.current) return;
+      lastGraphSignatureRef.current = signature;
+
+      const rootNode: Node = { id: 'root', label: 'ROOT', type: 'root', x: 0, y: 0 };
+      const conceptNodes: Node[] = [];
+      const valueNodes: Node[] = [];
+      const edges: Edge[] = [];
+
+      Object.entries(normalized).forEach(([concept, values], conceptIdx) => {
+        const conceptId = `concept-${conceptIdx}`;
+        conceptNodes.push({ id: conceptId, label: concept, type: 'concept' });
+        edges.push({ source: 'root', target: conceptId });
+        if (Array.isArray(values) && values.length > 0) {
+          values.forEach((value, valueIdx) => {
+            const valueId = `value-${conceptIdx}-${valueIdx}`;
+            valueNodes.push({ id: valueId, label: value, type: 'action' });
+            edges.push({ source: conceptId, target: valueId });
+          });
+        }
+      });
+
+      onGraphUpdate({
+        nodes: [rootNode, ...conceptNodes, ...valueNodes],
+        edges,
+      });
+    },
+    [onGraphUpdate]
+  );
 
   const handleDone = useCallback(
-    (data: { conceptMap: Record<string, string[]>; feasibilitySignal?: number }) => {
-      const mapToRender = filterConceptMapToCurrentFlow(data.conceptMap, messagesRef.current, replyRef.current);
-      if (onGraphUpdate && mapToRender && Object.keys(mapToRender).length > 0) {
-        const rootNode: Node = { id: 'root', label: 'ROOT', type: 'root', x: 0, y: 0 };
-        const conceptNodes: Node[] = [];
-        const valueNodes: Node[] = [];
-        const edges: Edge[] = [];
-        Object.entries(mapToRender).forEach(([concept, values], conceptIdx) => {
-          const conceptId = `concept-${conceptIdx}`;
-          conceptNodes.push({ id: conceptId, label: concept, type: 'concept' });
-          edges.push({ source: 'root', target: conceptId });
-          if (Array.isArray(values) && values.length > 0) {
-            values.forEach((value, valueIdx) => {
-              const valueId = `value-${conceptIdx}-${valueIdx}`;
-              valueNodes.push({ id: valueId, label: value, type: 'action' });
-              edges.push({ source: conceptId, target: valueId });
-            });
-          }
-        });
-        onGraphUpdate({
-          nodes: [rootNode, ...conceptNodes, ...valueNodes],
-          edges,
-        });
-      }
+    (data: {
+      conceptMap: Record<string, string[]>;
+      feasibilitySignal?: number;
+      poc?: unknown;
+      prUrl?: string;
+      prompt?: string;
+    }) => {
+      const mapToRender = filterConceptMapToCurrentFlow(data.conceptMap, messagesRef.current, '');
+      pushGraphUpdate(mapToRender);
       onTurnComplete?.();
+      if (data.prompt && /generate the poc/i.test(data.prompt)) {
+        setShowGenerateCta(true);
+      }
+      if (data.poc) {
+        const parsed = normalizePocResponse(data.poc);
+        if (parsed) {
+          setPocData(parsed);
+          setPocGenerated(true);
+          if (data.prUrl) {
+            setGithubOauthStatus(`PR opened: ${data.prUrl}`);
+            setGithubConnection((prev) =>
+              prev
+                ? { ...prev, defaultOwner: prev.defaultOwner || githubDefaultOwnerInput, defaultRepo: prev.defaultRepo || githubDefaultRepoInput }
+                : prev
+            );
+          }
+        }
+      }
     },
-    [onGraphUpdate, onTurnComplete]
+    [pushGraphUpdate, onTurnComplete, githubDefaultOwnerInput, githubDefaultRepoInput]
   );
 
   const {
@@ -383,9 +451,80 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
   useEffect(() => {
     messagesRef.current = messages;
     replyRef.current = reply;
+    const latestUser = messages
+      .slice()
+      .reverse()
+      .find((m) => m.role === 'user' && m.content.trim());
+    if (latestUser?.content) {
+      lastUserMessageRef.current = latestUser.content.trim();
+    }
+
   }, [messages, reply]);
 
-  const focusedConceptMap = filterConceptMapToCurrentFlow(conceptMap, messages, reply);
+  const deriveProductType = (text: string) => {
+    const lower = text.toLowerCase();
+    if (lower.includes('marketplace')) return 'Marketplace';
+    if (lower.includes('mobile')) return 'Mobile';
+    if (lower.includes('web')) return 'Web';
+    if (lower.includes('desktop')) return 'Desktop';
+    if (lower.includes('cli') || lower.includes('command line')) return 'CLI';
+    if (lower.includes('internal')) return 'Internal Tool';
+    if (lower.includes('api')) return 'API Product';
+    if (lower.includes('saas')) return 'SaaS';
+    return null;
+  };
+
+  const deriveTargetUsers = (text: string) => {
+    const match = text.match(/\bfor\s+([^.?!,\n]+?)(?:$|[.?!,\n])/i);
+    return match?.[1]?.trim() || '';
+  };
+
+  const deriveTechStack = (text: string) => {
+    const lower = text.toLowerCase();
+    const candidates = TECH_STACK_OPTIONS.filter((t) =>
+      lower.includes(t.toLowerCase().replace(/\.js$/, ''))
+    );
+    return candidates;
+  };
+
+  const focusedConceptMap = filterConceptMapToCurrentFlow(conceptMap, messages, '');
+  const getLatestUserMessage = useCallback(() => {
+    if (lastUserMessageRef.current.trim()) return lastUserMessageRef.current.trim();
+    for (let i = messagesRef.current.length - 1; i >= 0; i -= 1) {
+      const m = messagesRef.current[i];
+      if (m.role === 'user' && m.content.trim()) return m.content.trim();
+    }
+    return '';
+  }, []);
+
+  const isAgentWorking =
+    connecting || !ready || !!reply?.trim() || pocLoading || pocHydrating;
+  const ideaFromChat = pocIdea.trim() || getLatestUserMessage();
+  const autoTargetUsers =
+    userEditedTargetUsers ? targetUsers : deriveTargetUsers(getLatestUserMessage()) || targetUsers;
+  const autoProductType =
+    userEditedProductType ? productType : deriveProductType(getLatestUserMessage()) || productType;
+  const autoTechStack =
+    userEditedStack && selectedTechStack.length > 0
+      ? selectedTechStack
+      : deriveTechStack(getLatestUserMessage()).length > 0
+        ? deriveTechStack(getLatestUserMessage())
+        : selectedTechStack;
+  const stackAnswer = userEditedStack ? selectedTechStack : autoTechStack;
+  const targetAnswer = userEditedTargetUsers ? targetUsers.trim() : autoTargetUsers.trim();
+  const productAnswer = userEditedProductType ? productType : autoProductType;
+  const stackReady = stackAnswer.length > 0 && JSON.stringify(stackAnswer) !== JSON.stringify(DEFAULT_TECH_STACK);
+  const targetReady = !!targetAnswer && targetAnswer !== DEFAULT_TARGET_USERS;
+  const productReady = !!productAnswer && productAnswer !== DEFAULT_PRODUCT_TYPE;
+  const hasNonDefaultStack =
+    (userEditedStack && selectedTechStack.length > 0 && JSON.stringify(selectedTechStack) !== JSON.stringify(DEFAULT_TECH_STACK)) ||
+    (!userEditedStack && autoTechStack.length > 0 && JSON.stringify(autoTechStack) !== JSON.stringify(DEFAULT_TECH_STACK));
+  const hasNonDefaultTarget =
+    (userEditedTargetUsers && targetUsers.trim() && targetUsers.trim() !== DEFAULT_TARGET_USERS) ||
+    (!userEditedTargetUsers && autoTargetUsers.trim() && autoTargetUsers.trim() !== DEFAULT_TARGET_USERS);
+  const hasNonDefaultProduct =
+    (userEditedProductType && productType) ||
+    (!userEditedProductType && autoProductType && autoProductType !== DEFAULT_PRODUCT_TYPE);
 
   useEffect(() => {
     if (Object.keys(focusedConceptMap).length > 0) {
@@ -394,8 +533,44 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
   }, [focusedConceptMap]);
 
   useEffect(() => {
+    const mapToRender = Object.keys(stableConceptMap).length > 0 ? stableConceptMap : conceptMap;
+    pushGraphUpdate(mapToRender);
+  }, [stableConceptMap, conceptMap, pushGraphUpdate]);
+
+  useEffect(() => {
     setStableConceptMap({});
+    lastGraphSignatureRef.current = '';
   }, [session?.id]);
+
+  useEffect(() => {
+    const latest = getLatestUserMessage();
+    // only set missing fields once; do not overwrite user edits or existing values
+    if (!userEditedIdea && !pocIdea.trim() && latest) {
+      setPocIdea(latest);
+    }
+    if (!userEditedTargetUsers && !targetUsers.trim()) {
+      const derived = deriveTargetUsers(latest);
+      if (derived) setTargetUsers(derived);
+    }
+    if (!userEditedProductType && !productType) {
+      const derived = deriveProductType(latest);
+      if (derived) setProductType(derived);
+    }
+    if (!userEditedStack && selectedTechStack.length === 0) {
+      const derived = parseStackFromText(latest);
+      if (derived.length > 0) setSelectedTechStack(derived);
+    }
+  }, [
+    getLatestUserMessage,
+    pocIdea,
+    userEditedIdea,
+    userEditedProductType,
+    userEditedStack,
+    userEditedTargetUsers,
+    targetUsers,
+    productType,
+    selectedTechStack.length,
+  ]);
 
   const hasPocDiscussion =
     messages.some((m) => hasPocIntent(m.content)) || hasPocIntent(reply);
@@ -405,6 +580,29 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
     previousPocIntentRef.current = hasPocDiscussion;
   }, [hasPocDiscussion]);
 
+  const shouldAutoPoc = false;
+
+  useEffect(() => {
+    // auto POC generation disabled
+  }, []);
+
+  useEffect(() => {
+    setShowGenerateCta(
+      !pocLoading &&
+        !generationRequested &&
+        !pocGenerated &&
+        !![...messages].reverse().find(
+          (m) =>
+            m.role === 'assistant' &&
+            /shall i generate|should i generate|ready to generate|generate the poc/i.test(m.content)
+        )
+    );
+  }, [messages, pocLoading, generationRequested, pocGenerated]);
+
+  useEffect(() => {
+    autoPocTriggeredRef.current = false;
+  }, [session?.id]);
+
   useEffect(() => {
     if (session?.id) {
       setIsChatExpanded(true);
@@ -413,6 +611,7 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
       setShowGithubModal(false);
       setShowPocPanel(false);
       previousPocIntentRef.current = false;
+      autoPocTriggeredRef.current = false;
     }
   }, [session?.id]);
 
@@ -422,6 +621,12 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
     if (stored) {
       setAiStudioApiKey(stored);
       setRememberApiKey(true);
+    } else {
+      const envKey = import.meta.env.VITE_GOOGLE_API_KEY as string | undefined;
+      if (envKey) {
+        setAiStudioApiKey(envKey);
+        setRememberApiKey(false);
+      }
     }
   }, []);
 
@@ -435,6 +640,7 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
   }, [rememberApiKey, aiStudioApiKey]);
 
   const toggleTech = (tech: string) => {
+    setUserEditedStack(true);
     setSelectedTechStack((prev) =>
       prev.includes(tech)
         ? prev.filter((t) => t !== tech)
@@ -447,13 +653,16 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
     setGithubStatusError(null);
     try {
       const status = await getGithubStatus();
+      const ownerToUse = status.defaultOwner || status.login || '';
+      const repoToUse = status.defaultRepo || '';
+
       setGithubConnection(status);
-      setGithubDefaultOwnerInput(status.defaultOwner || status.login || 'Harini-Sha');
-      setGithubDefaultRepoInput(status.defaultRepo || 'test');
+      setGithubDefaultOwnerInput(ownerToUse);
+      setGithubDefaultRepoInput(repoToUse);
       if (status.connected) {
         setGithubOauthStatus(
-          status.defaultOwner && status.defaultRepo
-            ? `GitHub connected. Default repo set to ${status.defaultOwner}/${status.defaultRepo}.`
+          ownerToUse && repoToUse
+            ? `GitHub connected. Default repo set to ${ownerToUse}/${repoToUse}.`
             : 'GitHub connected successfully.'
         );
       }
@@ -480,10 +689,12 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
     setGithubStatusError(null);
     try {
       const status = await setGithubDefaultRepo({ owner, repo });
+      const ownerToUse = status.defaultOwner || owner;
+      const repoToUse = status.defaultRepo || repo;
       setGithubConnection(status);
-      setGithubDefaultOwnerInput(status.defaultOwner || owner);
-      setGithubDefaultRepoInput(status.defaultRepo || repo);
-      setGithubOauthStatus(`Default repo saved as ${owner}/${repo}.`);
+      setGithubDefaultOwnerInput(ownerToUse);
+      setGithubDefaultRepoInput(repoToUse);
+      setGithubOauthStatus(`Default repo saved as ${ownerToUse}/${repoToUse}.`);
       return status;
     } catch (e) {
       const message =
@@ -528,16 +739,33 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
     void refreshGithubStatus();
   }, [refreshGithubStatus]);
 
-  const handleGeneratePoc = async () => {
+  async function handleGeneratePoc(options?: { stack?: string[]; idea?: string; target?: string; product?: string; skipFieldGuards?: boolean }) {
     if (!session?.id) return;
-    if (selectedTechStack.length === 0) {
-      setPocError('Select at least one tech stack item.');
+    setGenerationRequested(true);
+    const techStackToSend = options?.stack ?? (userEditedStack ? selectedTechStack : autoTechStack);
+    const ideaForPoc = (options?.idea ?? ideaFromChat).trim();
+    const targetUsersToSend =
+      typeof options?.target === 'string'
+        ? options.target.trim()
+        : userEditedTargetUsers
+          ? targetUsers.trim()
+          : autoTargetUsers.trim();
+    const productTypeToSend =
+      options?.product !== undefined
+        ? options.product
+        : userEditedProductType
+          ? productType
+          : autoProductType;
+
+    if (techStackToSend.length === 0) {
+      setPocError('Pick a tech stack before generating a POC.');
       return;
     }
-    if (!aiStudioApiKey.trim()) {
-      setApiKeyInlineError('AI Studio / Gemini API Key is required.');
+    if (!options?.skipFieldGuards && !ideaForPoc) {
+      setPocError('Need an idea from the conversation before generating a POC.');
       return;
     }
+    autoPocTriggeredRef.current = true;
     setApiKeyInlineError(null);
     setPocError(null);
     setPocLoading(true);
@@ -560,20 +788,35 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
         }
       }
 
+      let referenceLinks: Array<{ title: string; url: string; snippet?: string }> = [];
+      try {
+        referenceLinks = await buildReferenceLinks(ideaForPoc);
+      } catch {
+        referenceLinks = [];
+      }
+
       const payload: PocPayload = {
-        techStack: selectedTechStack,
-        productType,
-        targetUsers,
+        techStack: techStackToSend,
+        productType: productTypeToSend,
+        targetUsers: targetUsersToSend,
         notificationEmail,
         aiStudioLink: aiStudioLink.trim() || undefined,
-        aiStudioApiKey: aiStudioApiKey.trim(),
+        referenceLinks,
       };
-      if (pocIdea.trim()) payload.idea = pocIdea.trim();
+      payload.idea = ideaForPoc;
+      if (!githubConnection?.defaultOwner && githubDefaultOwnerInput) {
+        (payload as any).owner = githubDefaultOwnerInput;
+      }
+      if (!githubConnection?.defaultRepo && githubDefaultRepoInput) {
+        (payload as any).repo = githubDefaultRepoInput;
+      }
 
       const raw = await createSessionPoc(session.id, payload);
       const parsed = normalizePocResponse(raw);
       if (!parsed) throw new Error('POC response missing draft payload.');
       setPocData(parsed);
+      setPocGenerated(true);
+      setGenerationRequested(false);
       if (parsed.github?.prUrl) {
         setGithubOauthStatus(
           `PR #${parsed.github.prNumber ?? ''} created${parsed.github.owner && parsed.github.repo ? ` in ${parsed.github.owner}/${parsed.github.repo}` : ''}.`
@@ -588,16 +831,12 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
       });
     } catch (e) {
       const message = e instanceof Error ? redactSensitive(e.message) : 'Failed to generate POC';
-      if (/aiStudioApiKey\s+is\s+required/i.test(message)) {
-        setApiKeyInlineError('AI Studio / Gemini API Key is required.');
-        setPocError(null);
-      } else {
-        setPocError('Failed to generate POC. Please verify inputs and try again.');
-      }
+      setPocError(message || 'Failed to generate POC. Please verify inputs and try again.');
     } finally {
       setPocLoading(false);
+      setGenerationRequested(false);
     }
-  };
+  }
 
   const handleResendNotification = async () => {
     if (!session?.id) return;
@@ -630,7 +869,7 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
     }
   };
 
-  const canGeneratePoc = selectedTechStack.length > 0 && aiStudioApiKey.trim().length > 0 && !pocLoading;
+  const canGeneratePoc = ideaFromChat.trim().length > 0 && selectedTechStack.length > 0 && !pocLoading;
 
   const getFileName = (file: PocFileSnippet, idx: number) =>
     file.path || file.filename || `snippet-${idx + 1}.txt`;
@@ -801,6 +1040,7 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
     const trimmed = userInput.trim();
     if (!trimmed) return;
     if (session) onLog?.({ role: 'user', text: trimmed, timestamp: new Date() });
+    lastUserMessageRef.current = trimmed;
     sendText(trimmed);
     setUserInput('');
   };
@@ -837,14 +1077,14 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
             sendAudio(base64, 'audio/pcm;rate=16000', voiceTranscriptRef.current);
           }
         } catch (err) {
-          console.error('Error while stopping mic capture after late handle resolution:', err);
+          // ignore late stop errors from mic capture
         }
         return;
       }
       setCaptureHandle(handle);
       setRecording(true);
     } catch (e) {
-      console.error('Microphone access failed:', e);
+      // ignore microphone access errors; UI will show failure state
       onLog?.({
         role: 'system',
         text: 'Microphone access failed: ' + (e instanceof Error ? e.message : 'Unknown'),
@@ -865,10 +1105,21 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
       const base64 = await captureHandle.stop();
       setCaptureHandle(null);
       if (base64) {
+        if (voiceTranscriptRef.current.trim()) {
+          lastUserMessageRef.current = voiceTranscriptRef.current.trim();
+        }
         sendAudio(base64, 'audio/pcm;rate=16000', voiceTranscriptRef.current);
       }
     } catch (err) {
-      console.error('Error while stopping mic capture or sending audio:', err);
+      // ignore mic capture/stream errors; UI already reflects failure
+    }
+  };
+
+  const handleMicToggle = async () => {
+    if (recording) {
+      await handleMicPressEnd();
+    } else {
+      await handleMicPressStart();
     }
   };
 
@@ -876,11 +1127,17 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
     <div className={`flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] ${expanded ? 'min-h-[320px] max-h-[42vh] xl:max-h-[48vh]' : 'flex-1'}`}>
       <div className="border-b border-white/10 px-4 py-3">
         <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-[11px] uppercase tracking-[0.28em] text-gray-500">Conversation</div>
-            <div className="mt-1 text-xs text-gray-400">
-              Cleaner spacing, stronger message grouping, less visual noise.
+          <div className="flex items-center gap-2">
+            <div>
+              <div className="text-[11px] uppercase tracking-[0.28em] text-gray-500">Conversation</div>
+              <div className="text-[11px] text-gray-500">Live agent chat</div>
             </div>
+            {isAgentWorking && (
+              <div className="flex items-center gap-2 rounded-full border border-cyan-300/40 bg-cyan-500/10 px-3 py-1 text-[11px] text-cyan-100">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-cyan-300" />
+                <span>Thinking</span>
+              </div>
+            )}
           </div>
           {!expanded && (
             <button
@@ -932,7 +1189,16 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
         <div className="space-y-4">
           {messages.map((m, i) => {
             const split = m.role === 'assistant' ? splitAssistantContent(m.content) : { response: '', thoughts: '' };
-            const assistantDisplay = m.role === 'assistant' ? split.response : '';
+            const mainResponse =
+              m.role === 'assistant'
+                ? (split.response && split.response.trim()) ||
+                  (m.content && m.content.trim()) ||
+                  '...'
+                : m.content;
+            const assistantDisplay =
+              m.role === 'assistant'
+                ? (split.response && split.response.trim()) || m.content
+                : '';
 
             return (
               <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -949,6 +1215,29 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
                   >
                     {m.role === 'assistant' ? (assistantDisplay || 'Open Thoughts to view agent reasoning.') : m.content}
                   </div>
+                  {m.role === 'assistant' &&
+                    showGenerateCta &&
+                    /shall i generate|should i generate|ready to generate|generate the poc/i.test(m.content) && (
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleGeneratePoc}
+                            disabled={!canGeneratePoc || pocLoading}
+                            className="rounded-xl border border-blue-400/40 bg-blue-500/15 px-4 py-2 text-xs font-bold uppercase tracking-wider text-blue-100 hover:bg-blue-500/25 disabled:opacity-50"
+                          >
+                            {pocLoading ? 'Generating POC...' : 'Generate POC'}
+                          </button>
+                          {pocLoading && (
+                            <span className="flex items-center gap-1 text-xs text-blue-100">
+                              <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-200 border-t-transparent" />
+                              Generating POC… you can keep chatting.
+                            </span>
+                          )}
+                        </div>
+                        {pocError && <div className="text-xs text-red-300">{pocError}</div>}
+                      </div>
+                    )}
                   {m.role === 'assistant' && split.thoughts && (
                     <details className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2">
                       <summary className="cursor-pointer select-none text-[11px] uppercase tracking-[0.22em] text-gray-300">
@@ -966,13 +1255,14 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
 
           {reply && (() => {
             const split = splitAssistantContent(reply);
+            const replyDisplay = (split.response && split.response.trim()) || reply;
 
             return (
               <div className="flex justify-start">
                 <div className={`${expanded ? 'max-w-[82%] xl:max-w-[78%]' : 'max-w-[92%]'} space-y-2`}>
                   <div className="px-1 text-[11px] uppercase tracking-[0.22em] text-gray-500">Agent</div>
                   <div className="rounded-2xl border border-blue-400/20 bg-blue-500/[0.08] px-4 py-3 text-sm leading-6 text-white whitespace-pre-wrap break-words">
-                    {split.response || 'Open Thoughts to view agent reasoning.'}
+                    {replyDisplay}
                   </div>
                   {split.thoughts && (
                     <details className="rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2">
@@ -1029,29 +1319,19 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
           </button>
           <button
             type="button"
-            onMouseDown={handleMicPressStart}
-            onMouseUp={handleMicPressEnd}
-            onMouseLeave={recording ? handleMicPressEnd : undefined}
-            onTouchStart={(e) => {
-              e.preventDefault();
-              handleMicPressStart();
-            }}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              handleMicPressEnd();
-            }}
+            onClick={() => void handleMicToggle()}
             disabled={!connected || !ready}
             className={`flex h-12 items-center justify-center rounded-2xl border transition-colors ${
               recording
                 ? 'border-red-500/50 bg-red-500/20'
                 : 'border-white/15 bg-black/30 hover:bg-white/10'
             } disabled:opacity-50`}
-            title="Hold to talk"
+            title={recording ? 'Tap to stop' : 'Tap to record'}
           >
             {recording ? <MicOff className="h-5 w-5 text-red-300" /> : <Mic className="h-5 w-5 text-white" />}
           </button>
           <div className="text-center text-[11px] leading-4 text-gray-500">
-            {recording ? 'Recording... release to send' : 'Hold mic to talk'}
+            {recording ? 'Recording... tap to stop' : 'Tap mic to talk'}
           </div>
         </div>
       </div>
@@ -1065,7 +1345,10 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
           <label className="text-[11px] uppercase tracking-wider text-gray-400">Idea</label>
           <input
             value={pocIdea}
-            onChange={(e) => setPocIdea(e.target.value)}
+            onChange={(e) => {
+              setUserEditedIdea(true);
+              setPocIdea(e.target.value);
+            }}
             placeholder="Leave empty to use latest user message"
             className="w-full rounded-xl border border-white/15 bg-black/30 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-white/40"
           />
@@ -1083,7 +1366,10 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
           <label className="text-[11px] uppercase tracking-wider text-gray-400">Product Type</label>
           <select
             value={productType}
-            onChange={(e) => setProductType(e.target.value)}
+            onChange={(e) => {
+              setUserEditedProductType(true);
+              setProductType(e.target.value);
+            }}
             className="w-full rounded-xl border border-white/15 bg-black/30 px-3 py-2 text-sm text-white focus:outline-none focus:border-white/40"
           >
             {PRODUCT_TYPES.map((type) => (
@@ -1097,7 +1383,10 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
           <label className="text-[11px] uppercase tracking-wider text-gray-400">Target Users</label>
           <input
             value={targetUsers}
-            onChange={(e) => setTargetUsers(e.target.value)}
+            onChange={(e) => {
+              setUserEditedTargetUsers(true);
+              setTargetUsers(e.target.value);
+            }}
             placeholder="Startup founders"
             className="w-full rounded-xl border border-white/15 bg-black/30 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-white/40"
           />
@@ -1112,39 +1401,6 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
             className="w-full rounded-xl border border-white/15 bg-black/30 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-white/40"
           />
         </div>
-      </div>
-
-      <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-        <label className="text-[11px] uppercase tracking-wider text-gray-300">AI Studio / Gemini API Key</label>
-        <div className="mt-2 flex gap-2">
-          <input
-            type="password"
-            value={aiStudioApiKey}
-            onChange={(e) => {
-              setAiStudioApiKey(e.target.value);
-              if (apiKeyInlineError) setApiKeyInlineError(null);
-            }}
-            placeholder="AIza..."
-            className="flex-1 rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-white/40"
-          />
-          <button
-            type="button"
-            onClick={handleClearApiKey}
-            className="rounded-xl border border-white/15 px-3 py-2 text-xs text-gray-200 hover:bg-white/10"
-          >
-            Clear key
-          </button>
-        </div>
-        <label className="mt-2 inline-flex items-center gap-2 text-xs text-gray-400">
-          <input
-            type="checkbox"
-            checked={rememberApiKey}
-            onChange={(e) => setRememberApiKey(e.target.checked)}
-            className="accent-blue-400"
-          />
-          Remember on this device
-        </label>
-        {apiKeyInlineError && <p className="mt-2 text-xs text-red-300">{apiKeyInlineError}</p>}
       </div>
 
       <div className="space-y-2">
@@ -1168,150 +1424,198 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
             );
           })}
         </div>
-      </div>
+        </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={handleGeneratePoc}
-          disabled={!canGeneratePoc}
-          className="rounded-xl border border-blue-400/40 bg-blue-500/15 px-4 py-2 text-xs font-bold uppercase tracking-wider text-blue-200 hover:bg-blue-500/25 disabled:opacity-50"
-        >
-          {pocLoading ? 'Generating POC...' : 'Generate POC'}
-        </button>
-        <button
-          type="button"
-          onClick={hydratePoc}
-          disabled={pocHydrating}
-          className="rounded-xl border border-white/15 px-4 py-2 text-xs font-bold uppercase tracking-wider text-gray-200 hover:bg-white/10 disabled:opacity-50"
-        >
-          {pocHydrating ? 'Refreshing...' : 'Refresh POC'}
-        </button>
-        {pocError && <span className="text-xs text-red-300">{pocError}</span>}
-      </div>
-
-      {pocData?.notification && (
-        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-xs">
-          <Bell className="h-4 w-4 text-blue-300" />
-          <span className="text-white">
-            Notification: <strong>{pocData.notification.status || 'sent'}</strong>
-          </span>
-          {pocData.notification.email && <span className="text-gray-300">to {pocData.notification.email}</span>}
-          {pocData.notification.message && <span className="text-gray-400">{pocData.notification.message}</span>}
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={handleResendNotification}
-            disabled={resendingNotification}
-            className="ml-auto rounded-xl border border-blue-400/40 px-3 py-1 text-xs text-blue-200 hover:bg-blue-500/15 disabled:opacity-50"
+            onClick={handleGeneratePoc}
+            disabled={!canGeneratePoc}
+            className="rounded-xl border border-blue-400/40 bg-blue-500/15 px-4 py-2 text-xs font-bold uppercase tracking-wider text-blue-200 hover:bg-blue-500/25 disabled:opacity-50"
+            title="Generate POC"
           >
-            {resendingNotification ? 'Resending...' : 'Resend'}
+            {pocLoading ? 'Generating POC...' : 'Generate POC'}
           </button>
+          <button
+            type="button"
+            onClick={hydratePoc}
+            disabled={pocHydrating}
+            className="rounded-xl border border-white/15 px-4 py-2 text-xs font-bold uppercase tracking-wider text-gray-200 hover:bg-white/10 disabled:opacity-50"
+          >
+            {pocHydrating ? 'Refreshing...' : 'Refresh POC'}
+          </button>
+          {pocError && <span className="text-xs text-red-300">{pocError}</span>}
         </div>
-      )}
-
-      {(pocData?.github || pocData?.githubWarning) && (
-        <div
-          className={`rounded-2xl border p-3 ${
-            pocData.github
-              ? 'border-green-500/25 bg-green-500/10'
-              : 'border-amber-500/25 bg-amber-500/10'
-          }`}
-        >
-          <div className="text-[11px] uppercase tracking-wider text-gray-300">GitHub PR</div>
-          {pocData.github ? (
-            <div className="mt-2 space-y-2 text-sm text-white/90">
-              <p>
-                PR #{pocData.github.prNumber ?? 'created'}
-                {pocData.github.owner && pocData.github.repo
-                  ? ` in ${pocData.github.owner}/${pocData.github.repo}`
-                  : ''}
-                {pocData.github.branch ? ` on branch ${pocData.github.branch}` : ''}.
-              </p>
-              {pocData.github.prUrl && (
-                <a
-                  href={pocData.github.prUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 text-sm text-green-200 underline underline-offset-4"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  Open pull request
-                </a>
-              )}
-            </div>
-          ) : (
-            <p className="mt-2 text-sm text-amber-200">{pocData.githubWarning}</p>
-          )}
-        </div>
-      )}
-
-      {pocData?.pocDraft && (
-        <div className="space-y-3">
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={handleOpenBuild}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-blue-400/40 bg-blue-500/15 px-3 py-1.5 text-xs text-blue-200 hover:bg-blue-500/25"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              Open in AI Studio Build
-            </button>
-            <button
-              type="button"
-              onClick={handleExportPoc}
-              disabled={exportingPoc}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10 disabled:opacity-50"
-            >
-              <Download className="h-3.5 w-3.5" />
-              {exportingPoc ? 'Exporting...' : 'Download export'}
-            </button>
-            <button
-              type="button"
-              onClick={handleCopyAllFiles}
-              disabled={(pocData.pocDraft.files || []).length === 0}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10 disabled:opacity-50"
-            >
-              <Copy className="h-3.5 w-3.5" />
-              {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Copy failed' : 'Copy all'}
-            </button>
-            <button
-              type="button"
-              onClick={handleDownloadZip}
-              disabled={(pocData.pocDraft.files || []).length === 0}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10 disabled:opacity-50"
-            >
-              <Download className="h-3.5 w-3.5" />
-              ZIP
-            </button>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-            <div className="text-[11px] uppercase tracking-wider text-gray-400">Summary</div>
-            <p className="mt-2 whitespace-pre-wrap text-sm text-white/90">{pocData.pocDraft.summary}</p>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-              <div className="text-[11px] uppercase tracking-wider text-gray-400">Backend Plan</div>
-              <ul className="mt-2 list-disc list-inside space-y-1 text-sm text-white/90">
-                {pocData.pocDraft.backendPlan.map((item, idx) => (
-                  <li key={`be-${idx}`}>{item}</li>
-                ))}
-              </ul>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
-              <div className="text-[11px] uppercase tracking-wider text-gray-400">Frontend Plan</div>
-              <ul className="mt-2 list-disc list-inside space-y-1 text-sm text-white/90">
-                {pocData.pocDraft.frontendPlan.map((item, idx) => (
-                  <li key={`fe-${idx}`}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
+
+  const renderPocDetails = () => {
+    if (!pocData) return null;
+
+    return (
+      <div className="space-y-3 p-4">
+        {pocData?.notification && (
+          <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-black/20 p-3 text-xs">
+            <Bell className="h-4 w-4 text-blue-300" />
+            <span className="text-white">
+              Notification: <strong>{pocData.notification.status || 'sent'}</strong>
+            </span>
+            {pocData.notification.email && <span className="text-gray-300">to {pocData.notification.email}</span>}
+            {pocData.notification.message && <span className="text-gray-400">{pocData.notification.message}</span>}
+            <button
+              type="button"
+              onClick={handleResendNotification}
+              disabled={resendingNotification}
+              className="ml-auto rounded-xl border border-blue-400/40 px-3 py-1 text-xs text-blue-200 hover:bg-blue-500/15 disabled:opacity-50"
+            >
+              {resendingNotification ? 'Resending...' : 'Resend'}
+            </button>
+          </div>
+        )}
+
+        <div className="space-y-3 rounded-2xl border border-white/10 bg-black/30 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[11px] uppercase tracking-[0.24em] text-gray-500">POC</div>
+              {pocData.pocDraft.summary && (
+                <div className="text-sm text-white mt-1">{pocData.pocDraft.summary}</div>
+              )}
+            </div>
+            {pocData.github?.prUrl && (
+              <a
+                href={pocData.github.prUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-xl border border-green-400/40 bg-green-500/10 px-3 py-1 text-xs text-green-100 hover:bg-green-500/20"
+              >
+                View PR
+              </a>
+            )}
+          </div>
+          {pocData.pocDraft.files?.length ? (
+            <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-gray-200">
+              <div className="text-[10px] uppercase tracking-[0.2em] text-gray-400 mb-2">Key Files</div>
+              <ul className="list-disc list-inside space-y-1">
+                {pocData.pocDraft.files.slice(0, 8).map((f, idx) => (
+                  <li key={idx}>{f.filename || f.path || 'file'}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {pocData.notification?.email && (
+            <div className="text-xs text-gray-300">
+              Notifications will go to: <span className="text-white">{pocData.notification.email}</span>
+              {notificationEmail && notificationEmail !== pocData.notification.email
+                ? ` (plus ${notificationEmail})`
+                : ''}
+            </div>
+          )}
+        </div>
+
+        {(pocData?.github || pocData?.githubWarning) && (
+          <div
+            className={`rounded-2xl border p-3 ${
+              pocData.github
+                ? 'border-green-500/25 bg-green-500/10'
+                : 'border-amber-500/25 bg-amber-500/10'
+            }`}
+          >
+            <div className="text-[11px] uppercase tracking-wider text-gray-300">GitHub PR</div>
+            {pocData.github ? (
+              <div className="mt-2 space-y-2 text-sm text-white/90">
+                <p>
+                  PR #{pocData.github.prNumber ?? 'created'}
+                  {pocData.github.owner && pocData.github.repo
+                    ? ` in ${pocData.github.owner}/${pocData.github.repo}`
+                    : ''}
+                  {pocData.github.branch ? ` on branch ${pocData.github.branch}` : ''}.
+                </p>
+                {pocData.github.prUrl && (
+                  <a
+                    href={pocData.github.prUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-sm text-green-200 underline underline-offset-4"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Open pull request
+                  </a>
+                )}
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-amber-200">{pocData.githubWarning}</p>
+            )}
+          </div>
+        )}
+
+        {pocData?.pocDraft && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleOpenBuild}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-blue-400/40 bg-blue-500/15 px-3 py-1.5 text-xs text-blue-200 hover:bg-blue-500/25"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                Open in AI Studio Build
+              </button>
+              <button
+                type="button"
+                onClick={handleExportPoc}
+                disabled={exportingPoc}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10 disabled:opacity-50"
+              >
+                <Download className="h-3.5 w-3.5" />
+                {exportingPoc ? 'Exporting...' : 'Download export'}
+              </button>
+              <button
+                type="button"
+                onClick={handleCopyAllFiles}
+                disabled={(pocData.pocDraft.files || []).length === 0}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10 disabled:opacity-50"
+              >
+                <Copy className="h-3.5 w-3.5" />
+                {copyStatus === 'copied' ? 'Copied' : copyStatus === 'error' ? 'Copy failed' : 'Copy all'}
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadZip}
+                disabled={(pocData.pocDraft.files || []).length === 0}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-white/15 px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10 disabled:opacity-50"
+              >
+                <Download className="h-3.5 w-3.5" />
+                ZIP
+              </button>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+              <div className="text-[11px] uppercase tracking-wider text-gray-400">Summary</div>
+              <p className="mt-2 whitespace-pre-wrap text-sm text-white/90">{pocData.pocDraft.summary}</p>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                <div className="text-[11px] uppercase tracking-wider text-gray-400">Backend Plan</div>
+                <ul className="mt-2 list-disc list-inside space-y-1 text-sm text-white/90">
+                  {pocData.pocDraft.backendPlan.map((item, idx) => (
+                    <li key={`be-${idx}`}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-black/20 p-3">
+                <div className="text-[11px] uppercase tracking-wider text-gray-400">Frontend Plan</div>
+                <ul className="mt-2 list-disc list-inside space-y-1 text-sm text-white/90">
+                  {pocData.pocDraft.frontendPlan.map((item, idx) => (
+                    <li key={`fe-${idx}`}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const renderGithubPanel = () => (
     <div className="overflow-hidden rounded-[28px] border border-white/15 bg-white/[0.05] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
@@ -1408,7 +1712,7 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
                 <input
                   value={githubDefaultOwnerInput}
                   onChange={(e) => setGithubDefaultOwnerInput(e.target.value)}
-                  placeholder="Harini-Sha"
+                  placeholder="github owner (e.g. your-username)"
                   className="mt-2 w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-white/40"
                 />
               </div>
@@ -1417,7 +1721,7 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
                 <input
                   value={githubDefaultRepoInput}
                   onChange={(e) => setGithubDefaultRepoInput(e.target.value)}
-                  placeholder="test"
+                  placeholder="repo name (e.g. my-project)"
                   className="mt-2 w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-white/40"
                 />
               </div>
@@ -1505,7 +1809,7 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
             <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/60 to-transparent" />
             <div className="relative flex flex-wrap items-start justify-between gap-3 border-b border-white/10 bg-white/[0.04] px-5 py-4">
               <div className="min-w-0 flex-1 pr-2">
-                <div className="text-xs uppercase tracking-[0.32em] text-slate-300/70">Live chat popup</div>
+                <div className="text-xs uppercase tracking-[0.32em] text-slate-300/70">Live chat</div>
                 <div className="mt-1 text-sm text-white">Talk through the idea here. If the user asks for a POC, the build workspace appears below in the same popup.</div>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
@@ -1533,7 +1837,7 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
                     onClick={onMinimize}
                     className="rounded-2xl border border-white/20 bg-white/[0.07] px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-gray-100 transition-colors hover:bg-white/[0.14]"
                   >
-                    Minimize
+                    -
                   </button>
                 )}
                 <button
@@ -1549,14 +1853,55 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
               </div>
             </div>
             <div className="relative flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-4 md:p-5">
-              {error && (
-                <div className="flex items-center justify-between gap-3 rounded-2xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-xs text-red-200">
-                  <span className="min-w-0 flex-1">{error}</span>
-                  <button type="button" onClick={clearError} className="shrink-0 underline underline-offset-2">
-                    Dismiss
-                  </button>
-                </div>
-              )}
+      {error && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-xs text-red-200">
+          <span className="min-w-0 flex-1">{error}</span>
+          <button type="button" onClick={clearError} className="shrink-0 underline underline-offset-2">
+            Dismiss
+          </button>
+        </div>
+      )}
+      {pocGenerated && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-green-500/40 bg-green-500/10 px-4 py-3 text-xs text-green-200">
+          <span className="min-w-0 flex-1 flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-green-300 animate-pulse" />
+            POC generated successfully.
+            {pocData?.github?.prUrl && (
+              <a
+                href={pocData.github.prUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="underline underline-offset-2 text-green-100"
+              >
+                View PR
+              </a>
+            )}
+          </span>
+          <button type="button" onClick={() => setPocGenerated(false)} className="shrink-0 underline underline-offset-2">
+            Dismiss
+          </button>
+        </div>
+      )}
+      {pocError && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+          <span className="min-w-0 flex-1">{pocError}</span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setPocError(null);
+                handleSendText();
+              }}
+              className="underline underline-offset-2"
+            >
+              Retry
+            </button>
+            <button type="button" onClick={() => setPocError(null)} className="underline underline-offset-2">
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
               <div className="grid min-h-0 grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,0.9fr)] xl:items-start">
                 <div className="flex min-h-0 flex-col gap-5">
                   {renderConversation(true)}
@@ -1565,18 +1910,45 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
                 <div className="flex min-h-0 flex-col gap-5">
                   {renderGithubPanel()}
                   {showPocPanel && (
-                    <div className="overflow-hidden rounded-[28px] border border-white/15 bg-white/[0.05] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-                      <div className="border-b border-white/10 px-5 py-4">
-                        <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.28em] text-slate-300/70">
-                          <Layers className="h-4 w-4 text-sky-200" />
-                          POC workspace
+                    <>
+                      <div className="overflow-hidden rounded-[28px] border border-white/15 bg-white/[0.05] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+                        <div className="border-b border-white/10 px-5 py-4 flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.28em] text-slate-300/70">
+                            <Layers className="h-4 w-4 text-sky-200" />
+                            POC workspace
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowPocWorkspace((s) => !s)}
+                            className="rounded-xl border border-white/20 bg-white/[0.08] px-3 py-1 text-xs uppercase tracking-wider text-white hover:bg-white/15"
+                          >
+                            {showPocWorkspace ? 'Hide' : 'View'}
+                          </button>
                         </div>
-                        <p className="mt-2 text-sm text-slate-200">
-                          The user asked for a POC, so the build tools are now available in this same popup.
-                        </p>
+                        {showPocWorkspace && (
+                          <div className="max-h-[42vh] overflow-y-auto p-1 xl:max-h-[58vh]">{renderPocWorkspace()}</div>
+                        )}
                       </div>
-                      <div className="max-h-[42vh] overflow-y-auto p-1 xl:max-h-[58vh]">{renderPocWorkspace()}</div>
-                    </div>
+
+                      {pocData && (
+                        <div className="overflow-hidden rounded-[28px] border border-white/15 bg-white/[0.05] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+                          <div className="border-b border-white/10 px-5 py-4 flex items-center justify-between">
+                            <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.28em] text-slate-300/70">
+                              <Layers className="h-4 w-4 text-green-200" />
+                              POC details
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setShowPocDetails((s) => !s)}
+                              className="rounded-xl border border-white/20 bg-white/[0.08] px-3 py-1 text-xs uppercase tracking-wider text-white hover:bg-white/15"
+                            >
+                              {showPocDetails ? 'Hide' : 'View'}
+                            </button>
+                          </div>
+                          {showPocDetails && <div className="max-h-[42vh] overflow-y-auto p-1 xl:max-h-[58vh]">{renderPocDetails()}</div>}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
