@@ -168,6 +168,7 @@ export type PocPayload = {
   notificationEmail?: string;
   aiStudioLink?: string;
   aiStudioApiKey?: string;
+  referenceLinks?: Array<{ title: string; url: string; snippet?: string }>;
 };
 
 export type PocGithubPublishPayload = {
@@ -431,7 +432,7 @@ export async function thinkStream(
             feasibilitySignal: obj.feasibilitySignal,
           });
       } catch (e) {
-        console.warn("Failed to parse line:", line, e);
+        // ignore malformed stream line
       }
     }
   }
@@ -450,7 +451,7 @@ export async function thinkStream(
           feasibilitySignal: obj.feasibilitySignal,
         });
     } catch (e) {
-      console.warn("Failed to parse buffer:", buffer, e);
+      // ignore malformed remaining buffer
     }
   }
 }

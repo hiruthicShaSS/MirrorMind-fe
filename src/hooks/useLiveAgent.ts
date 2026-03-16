@@ -28,7 +28,13 @@ export interface UseLiveAgentActions {
 }
 
 export function useLiveAgent(
-  onDone?: (data: { conceptMap: Record<string, string[]>; feasibilitySignal?: number }) => void
+  onDone?: (data: {
+    conceptMap: Record<string, string[]>;
+    feasibilitySignal?: number;
+    poc?: unknown;
+    prUrl?: string;
+    prompt?: string;
+  }) => void
 ): UseLiveAgentState & UseLiveAgentActions {
   const { push: pushAudio, stop: stopAudio, isPlaying: isAudioPlaying } = usePCMPlayer();
 
@@ -148,6 +154,9 @@ export function useLiveAgent(
             case 'done': {
               const map = msg.conceptMap || {};
               const feas = msg.feasibilitySignal ?? null;
+              const poc = (msg as any).poc;
+              const prUrl = (msg as any).prUrl;
+              const prompt = (msg as any).prompt;
               setConceptMap(map);
               setFeasibilitySignal(feas);
               const fromFullText = typeof msg.fullText === 'string' ? msg.fullText.trim() : '';
@@ -158,7 +167,7 @@ export function useLiveAgent(
               }
               replyAccumulatorRef.current = '';
               setReplyRef.current('');
-              onDone?.({ conceptMap: map, feasibilitySignal: msg.feasibilitySignal });
+              onDone?.({ conceptMap: map, feasibilitySignal: msg.feasibilitySignal, poc, prUrl, prompt });
               break;
             }
             case 'error':
@@ -168,7 +177,7 @@ export function useLiveAgent(
               break;
           }
         } catch (e) {
-          console.warn('Live message parse error:', e);
+          // ignore malformed live message payload
         }
       };
 

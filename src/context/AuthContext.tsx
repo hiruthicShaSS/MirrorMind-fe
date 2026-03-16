@@ -27,11 +27,26 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 const ENCODED_USER_ID_KEY = "encodedUserId";
+const USER_CACHE_KEY = "mm_user";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // hydrate from localStorage immediately to avoid forced sign-in on refresh
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const cached = window.localStorage.getItem(USER_CACHE_KEY);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached) as User;
+        setUser(parsed);
+      } catch {
+        window.localStorage.removeItem(USER_CACHE_KEY);
+      }
+    }
+  }, []);
 
   const persistEncodedUserId = useCallback((u: User | null) => {
     if (typeof window === "undefined") return;
@@ -45,18 +60,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const persistUser = useCallback((u: User | null) => {
+    if (typeof window === "undefined") return;
+    if (u) {
+      window.localStorage.setItem(USER_CACHE_KEY, JSON.stringify(u));
+    } else {
+      window.localStorage.removeItem(USER_CACHE_KEY);
+    }
+  }, []);
+
   const checkAuth = useCallback(async () => {
     try {
       const u = await api.getMe();
       setUser(u);
       persistEncodedUserId(u);
+      persistUser(u);
     } catch {
-      setUser(null);
+      // If backend is unreachable, keep any cached user to avoid forcing re-login.
+      const cached =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem(USER_CACHE_KEY)
+          : null;
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached) as User;
+          setUser(parsed);
+        } catch {
+          setUser(null);
+          persistUser(null);
+        }
+      } else {
+        setUser(null);
+      }
       persistEncodedUserId(null);
     } finally {
       setLoading(false);
     }
-  }, [persistEncodedUserId]);
+  }, [persistEncodedUserId, persistUser]);
 
   useEffect(() => {
     checkAuth();
@@ -66,6 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       await api.register(email, password, name);
+      // registration may require verification; keep user as null
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "Registration failed";
       setError(message);
@@ -79,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const u = await api.login(email, password);
       setUser(u);
       persistEncodedUserId(u);
+      persistUser(u);
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "Login failed";
       setError(message);
@@ -92,6 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const u = await api.loginWithGoogle(idToken);
       setUser(u);
       persistEncodedUserId(u);
+      persistUser(u);
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "Google login failed";
       setError(message);
@@ -105,6 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const u = await api.verifyEmail(email, code);
       setUser(u);
       persistEncodedUserId(u);
+      persistUser(u);
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "Invalid code";
       setError(message);
@@ -132,6 +176,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setUser(null);
     persistEncodedUserId(null);
+    persistUser(null);
   };
 
   const checkUserByEmail = async (email: string) => {
