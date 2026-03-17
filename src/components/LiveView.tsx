@@ -20,7 +20,6 @@ import {
 } from '../lib/api';
 import { buildReferenceLinks } from '../lib/referenceSearch';
 import type { GraphData, LogMessage, Node, Edge } from '../types/api';
-import React from 'react';
 
 interface LiveViewProps {
   onGraphUpdate?: (data: GraphData) => void;
@@ -60,9 +59,6 @@ const TECH_STACK_OPTIONS = [
 
 const PRODUCT_TYPES = ['SaaS', 'Marketplace', 'Mobile App', 'Internal Tool', 'API Product'];
 const AI_STUDIO_API_KEY_STORAGE_KEY = 'mm_ai_studio_api_key';
-const DEFAULT_TECH_STACK = ['Node.js', 'React'];
-const DEFAULT_TARGET_USERS = 'Startup founders';
-const DEFAULT_PRODUCT_TYPE = 'SaaS';
 const parseStackFromText = (text: string): string[] => {
   if (!text) return [];
   const lower = text.toLowerCase();
@@ -320,7 +316,6 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
   const messagesRef = useRef<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
   const replyRef = useRef('');
   const lastUserMessageRef = useRef('');
-  const lastProcessedUserMessageRef = useRef('');
   const [stableConceptMap, setStableConceptMap] = useState<Record<string, string[]>>({});
   const [selectedTechStack, setSelectedTechStack] = useState<string[]>(['Node.js', 'React']);
   const [productType, setProductType] = useState('SaaS');
@@ -333,7 +328,6 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
   const [userEditedStack, setUserEditedStack] = useState(false);
   const [userEditedTargetUsers, setUserEditedTargetUsers] = useState(false);
   const [userEditedProductType, setUserEditedProductType] = useState(false);
-  const [apiKeyInlineError, setApiKeyInlineError] = useState<string | null>(null);
   const [pocIdea, setPocIdea] = useState('');
   const [pocLoading, setPocLoading] = useState(false);
   const [pocHydrating, setPocHydrating] = useState(false);
@@ -364,7 +358,7 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
   const lastGraphSignatureRef = useRef<string>('');
 
   const pushGraphUpdate = useCallback(
-    (map?: Record<string, string[]>) => {
+    (map?: Record<string, string[]> | null) => {
       if (!onGraphUpdate) return;
       const normalized = normalizeConceptMap(map || {});
       if (!normalized || Object.keys(normalized).length === 0) return;
@@ -510,22 +504,6 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
       : deriveTechStack(getLatestUserMessage()).length > 0
         ? deriveTechStack(getLatestUserMessage())
         : selectedTechStack;
-  const stackAnswer = userEditedStack ? selectedTechStack : autoTechStack;
-  const targetAnswer = userEditedTargetUsers ? targetUsers.trim() : autoTargetUsers.trim();
-  const productAnswer = userEditedProductType ? productType : autoProductType;
-  const stackReady = stackAnswer.length > 0 && JSON.stringify(stackAnswer) !== JSON.stringify(DEFAULT_TECH_STACK);
-  const targetReady = !!targetAnswer && targetAnswer !== DEFAULT_TARGET_USERS;
-  const productReady = !!productAnswer && productAnswer !== DEFAULT_PRODUCT_TYPE;
-  const hasNonDefaultStack =
-    (userEditedStack && selectedTechStack.length > 0 && JSON.stringify(selectedTechStack) !== JSON.stringify(DEFAULT_TECH_STACK)) ||
-    (!userEditedStack && autoTechStack.length > 0 && JSON.stringify(autoTechStack) !== JSON.stringify(DEFAULT_TECH_STACK));
-  const hasNonDefaultTarget =
-    (userEditedTargetUsers && targetUsers.trim() && targetUsers.trim() !== DEFAULT_TARGET_USERS) ||
-    (!userEditedTargetUsers && autoTargetUsers.trim() && autoTargetUsers.trim() !== DEFAULT_TARGET_USERS);
-  const hasNonDefaultProduct =
-    (userEditedProductType && productType) ||
-    (!userEditedProductType && autoProductType && autoProductType !== DEFAULT_PRODUCT_TYPE);
-
   useEffect(() => {
     if (Object.keys(focusedConceptMap).length > 0) {
       setStableConceptMap(focusedConceptMap);
@@ -579,12 +557,6 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
     setShowPocPanel(hasPocDiscussion);
     previousPocIntentRef.current = hasPocDiscussion;
   }, [hasPocDiscussion]);
-
-  const shouldAutoPoc = false;
-
-  useEffect(() => {
-    // auto POC generation disabled
-  }, []);
 
   useEffect(() => {
     setShowGenerateCta(
@@ -766,7 +738,6 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
       return;
     }
     autoPocTriggeredRef.current = true;
-    setApiKeyInlineError(null);
     setPocError(null);
     setPocLoading(true);
     try {
@@ -858,14 +829,6 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
       setPocError(message.includes('Failed') ? message : 'Failed to resend notification.');
     } finally {
       setResendingNotification(false);
-    }
-  };
-
-  const handleClearApiKey = () => {
-    setAiStudioApiKey('');
-    setApiKeyInlineError(null);
-    if (typeof window !== 'undefined') {
-      window.localStorage.removeItem(AI_STUDIO_API_KEY_STORAGE_KEY);
     }
   };
 
@@ -1189,12 +1152,6 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
         <div className="space-y-4">
           {messages.map((m, i) => {
             const split = m.role === 'assistant' ? splitAssistantContent(m.content) : { response: '', thoughts: '' };
-            const mainResponse =
-              m.role === 'assistant'
-                ? (split.response && split.response.trim()) ||
-                  (m.content && m.content.trim()) ||
-                  '...'
-                : m.content;
             const assistantDisplay =
               m.role === 'assistant'
                 ? (split.response && split.response.trim()) || m.content
@@ -1222,7 +1179,7 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={handleGeneratePoc}
+                            onClick={() => void handleGeneratePoc()}
                             disabled={!canGeneratePoc || pocLoading}
                             className="rounded-xl border border-blue-400/40 bg-blue-500/15 px-4 py-2 text-xs font-bold uppercase tracking-wider text-blue-100 hover:bg-blue-500/25 disabled:opacity-50"
                           >
@@ -1429,7 +1386,7 @@ export default function LiveView({ onGraphUpdate, onLog, onConceptMapUpdate, onT
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={handleGeneratePoc}
+            onClick={() => void handleGeneratePoc()}
             disabled={!canGeneratePoc}
             className="rounded-xl border border-blue-400/40 bg-blue-500/15 px-4 py-2 text-xs font-bold uppercase tracking-wider text-blue-200 hover:bg-blue-500/25 disabled:opacity-50"
             title="Generate POC"
